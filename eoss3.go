@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 
@@ -153,8 +154,43 @@ func (b *EosBackend) GetBucketAcl(context.Context, *s3.GetBucketAclInput) ([]byt
 	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) CreateBucket(context.Context, *s3.CreateBucketInput, []byte) error {
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
+func (b *EosBackend) newNsRequest(_ context.Context) *erpc.NSRequest {
+	return &erpc.NSRequest{
+		Role: &erpc.RoleId{
+			Uid: uint64(b.cfg.Uid),
+			Gid: uint64(b.cfg.Gid),
+		},
+		Authkey: b.cfg.Authkey,
+	}
+}
+
+func (b *EosBackend) CreateBucket(ctx context.Context, req *s3.CreateBucketInput, acl []byte) error {
+	r := b.newNsRequest(ctx)
+
+	path := path.Join(b.cfg.MountDir, *req.Bucket)
+
+	r.Command = &erpc.NSRequest_Mkdir{
+		Mkdir: &erpc.NSRequest_MkdirRequest{
+			Id: &erpc.MDId{
+				Path: []byte(path),
+			},
+			Recursive: true,
+			Mode:      0750,
+		},
+	}
+
+	res, err := b.cl.Exec(ctx, r)
+	if err != nil {
+		return err
+	}
+
+	if res.Error != nil && res.Error.Code != 0 {
+		// TODO: check error code
+		fmt.Println(res.Error)
+		return s3err.GetAPIError(s3err.ErrInternalError)
+	}
+
+	return nil
 }
 
 func (b *EosBackend) PutBucketAcl(_ context.Context, bucket string, data []byte) error {
