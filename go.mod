@@ -17,6 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.1 // indirect
 	github.com/aws/smithy-go v1.22.3 // indirect
 	github.com/cern-eos/go-eosgrpc v0.0.0-20250205160007-5263e0105295 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect

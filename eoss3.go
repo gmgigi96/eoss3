@@ -26,6 +26,9 @@ type Config struct {
 	Authkey string `mapstructure:"authkey"`
 	// MountDir is the directory from where the s3 gateway is mounted
 	MountDir string `mapstructure:"mount_dir"`
+
+	Uid int `mapstructure:"uid"`
+	Gid int `mapstructure:"gid"`
 }
 
 func (c *Config) Validate() error {
@@ -75,11 +78,19 @@ func (b *EosBackend) Shutdown() {
 
 func (b *EosBackend) String() string { return "EOS" }
 
+func isVersionFolder(name string) bool {
+	return strings.HasPrefix(name, ".sys.v#.")
+}
+
 func (b *EosBackend) ListBuckets(ctx context.Context, req s3response.ListBucketsInput) (s3response.ListAllMyBucketsResult, error) {
 	fdrq := &erpc.FindRequest{
 		Type: erpc.TYPE_LISTING,
 		Id: &erpc.MDId{
 			Path: []byte(b.cfg.MountDir),
+		},
+		Role: &erpc.RoleId{
+			Uid: uint64(b.cfg.Uid),
+			Gid: uint64(b.cfg.Gid),
 		},
 		Maxdepth: 1,
 		Authkey:  b.cfg.Authkey,
@@ -92,6 +103,7 @@ func (b *EosBackend) ListBuckets(ctx context.Context, req s3response.ListBuckets
 
 	var listRes s3response.ListAllMyBucketsResult
 
+	i := 0
 	for {
 		r, err := res.Recv()
 		if err != nil {
@@ -107,8 +119,18 @@ func (b *EosBackend) ListBuckets(ctx context.Context, req s3response.ListBuckets
 			continue
 		}
 
+		i++
+		if i == 1 {
+			// first entry is the folder itself
+			continue
+		}
+
 		name := string(r.Cmd.Name)
 		if !strings.HasPrefix(name, req.Prefix) {
+			continue
+		}
+
+		if isVersionFolder(name) {
 			continue
 		}
 
