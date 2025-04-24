@@ -9,7 +9,7 @@ build: $(PLUGIN)
 
 .PHONY: $(PLUGIN)
 $(PLUGIN):
-	$(GOBUILD) -buildmode=plugin -o $(PLUGIN) eoss3.go
+	$(GOBUILD) -buildmode=plugin -o $(PLUGIN) ./...
 
 .PHONY: clean
 clean:
