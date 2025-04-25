@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"math"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -533,7 +532,24 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 	fmt.Println("ListObjects func")
 
 	bucket := *req.Bucket
+	prefix := *req.Prefix
 	p := filepath.Join(b.cfg.MountDir, bucket)
+	bucketDir := p
+
+	if strings.HasSuffix(prefix, "/") {
+		p = filepath.Join(p, prefix)
+		prefix = ""
+	} else {
+		i := strings.LastIndexByte(prefix, '/')
+		if i >= 0 {
+			dir := prefix[:i]
+			prefix = prefix[i+1:]
+			p = filepath.Join(p, dir)
+		}
+	}
+
+	fmt.Println("delimiter", *req.Delimiter, "prefix", *req.Prefix, "bucket", bucket)
+	fmt.Println("EOS path", p, "filter prefix", prefix)
 
 	// check if the bucket exists
 	_, err := b.stat(ctx, p, true)
@@ -555,7 +571,7 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 			Gid: uint64(b.cfg.Gid),
 		},
 		Authkey:  b.cfg.Authkey,
-		Maxdepth: math.MaxUint64, // FIXME: very bad this one
+		Maxdepth: 1,
 	}
 	findRes, err := b.cl.Find(ctx, findReq)
 	if err != nil {
@@ -567,6 +583,7 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 		IsTruncated: Ptr(false),
 	}
 
+	i := 0
 	for {
 		r, err := findRes.Recv()
 		if err != nil {
@@ -575,30 +592,47 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 			}
 			return s3response.ListObjectsResult{}, err
 		}
-
-		if r.Type == erpc.TYPE_CONTAINER || r.Fmd == nil {
+		i++
+		if i == 1 {
+			// we skip the current directory in the list
 			continue
 		}
 
-		path := string(r.Fmd.Path)
+		var path string
+		if r.Type == erpc.TYPE_CONTAINER {
+			path = string(r.Cmd.Path)
+		} else {
+			path = string(r.Fmd.Path)
+		}
 		if isHiddenResource(path) {
 			continue
 		}
 
-		key, _ := filepath.Rel(p, path)
+		key, _ := filepath.Rel(bucketDir, path)
 
-		listRes.Contents = append(listRes.Contents, s3response.Object{
-			ETag:         &r.Fmd.Etag,
-			StorageClass: types.ObjectStorageClassStandard,
-			LastModified: Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec))),
-			Key:          &key,
-			Size:         Ptr(int64(r.Fmd.Size)),
-			Owner: &types.Owner{
+		var obj s3response.Object
+		if r.Type == erpc.TYPE_CONTAINER {
+			obj.Key = Ptr(key + "/")
+			obj.LastModified = Ptr(time.Unix(int64(r.Cmd.Mtime.Sec), int64(r.Cmd.Mtime.NSec)))
+			obj.Size = Ptr(int64(0))
+			obj.StorageClass = types.ObjectStorageClassStandard
+		} else {
+			obj.ETag = &r.Fmd.Etag
+			obj.StorageClass = types.ObjectStorageClassStandard
+			obj.LastModified = Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec)))
+			obj.Key = &key
+			obj.Size = Ptr(int64(r.Fmd.Size))
+			obj.Owner = &types.Owner{
 				// TODO: check this
-				ID: Ptr(strconv.FormatUint(r.Fmd.Uid, 10)),
-			},
-		})
+				ID: Ptr(strconv.FormatUint(uint64(b.cfg.Uid), 10)),
+			}
+		}
+
+		listRes.Contents = append(listRes.Contents, obj)
 	}
+	listRes.Delimiter = req.Delimiter
+	listRes.Name = req.Bucket
+	listRes.Prefix = req.Prefix
 
 	return listRes, nil
 }
