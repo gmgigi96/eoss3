@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -29,11 +30,11 @@ type HTTPConfig struct {
 
 func (c *HTTPConfig) Validate() error {
 	if c.ServerURL == "" {
-		return errors.New("ServerURL is empty")
+		return errors.New("config ServerURL is empty")
 	}
 
 	if c.Authkey == "" {
-		return errors.New("Authkey is empty")
+		return errors.New("config Authkey is empty")
 	}
 
 	return nil
@@ -92,6 +93,48 @@ func (c *EOSHTTPClient) Get(ctx context.Context, path string) (io.ReadCloser, er
 		}
 
 		return res.Body, nil
+	}
+}
+
+func (c *EOSHTTPClient) Put(ctx context.Context, path string, stream io.Reader, length uint64) error {
+	url := c.buildFullURL(path)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
+	if err != nil {
+		return err
+	}
+
+	for {
+		req.Header.Set("x-gateway-authorization", c.cfg.Authkey)
+		req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
+		req.Header.Set("remote-user", c.cfg.Username)
+
+		res, err := c.cl.Do(req)
+		if err != nil {
+			return err
+		}
+
+		if res.StatusCode == http.StatusTemporaryRedirect {
+			// we got redirected to an FST
+
+			loc, err := res.Location()
+			if err != nil {
+				return err
+			}
+
+			req, err = http.NewRequestWithContext(ctx, http.MethodPut, loc.String(), stream)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
+			continue
+		}
+
+		if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
+			return fmt.Errorf("got non OK status code from %s: %d", req.URL.String(), res.StatusCode)
+		}
+
+		return nil
 	}
 }
 

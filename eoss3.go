@@ -371,7 +371,25 @@ func (b *EosBackend) UploadPartCopy(context.Context, *s3.UploadPartCopyInput) (s
 
 func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput) (s3response.PutObjectOutput, error) {
 	fmt.Println("PutObject func")
-	return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrNotImplemented)
+
+	bucket := *po.Bucket
+	key := *po.Key
+	length := *po.ContentLength
+
+	p := filepath.Join(b.cfg.MountDir, bucket, key)
+
+	if err := b.hcl.Put(ctx, p, po.Body, uint64(length)); err != nil {
+		return s3response.PutObjectOutput{}, err
+	}
+
+	r, err := b.stat(ctx, p, false)
+	if err != nil {
+		return s3response.PutObjectOutput{}, err
+	}
+
+	return s3response.PutObjectOutput{
+		ETag: r.Fmd.Etag,
+	}, nil
 }
 
 func (b *EosBackend) stat(ctx context.Context, path string, bucket bool) (*erpc.MDResponse, error) {
