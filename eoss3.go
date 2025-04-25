@@ -117,7 +117,15 @@ func (b *EosBackend) Shutdown() {
 func (b *EosBackend) String() string { return "EOS" }
 
 func isVersionFolder(name string) bool {
-	return strings.HasPrefix(name, ".sys.v#.")
+	return strings.Contains(name, ".sys.v#.")
+}
+
+func isAtomicFile(name string) bool {
+	return strings.Contains(name, ".sys.a#")
+}
+
+func isHiddenResource(name string) bool {
+	return isVersionFolder(name) || isAtomicFile(name)
 }
 
 func (b *EosBackend) ListBuckets(ctx context.Context, req s3response.ListBucketsInput) (s3response.ListAllMyBucketsResult, error) {
@@ -168,7 +176,7 @@ func (b *EosBackend) ListBuckets(ctx context.Context, req s3response.ListBuckets
 			continue
 		}
 
-		if isVersionFolder(name) {
+		if isHiddenResource(name) {
 			continue
 		}
 
@@ -572,7 +580,12 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 			continue
 		}
 
-		key, _ := filepath.Rel(p, string(r.Fmd.Path))
+		path := string(r.Fmd.Path)
+		if isHiddenResource(path) {
+			continue
+		}
+
+		key, _ := filepath.Rel(p, path)
 
 		listRes.Contents = append(listRes.Contents, s3response.Object{
 			ETag:         &r.Fmd.Etag,
