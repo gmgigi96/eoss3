@@ -44,7 +44,11 @@ func NewEOSHTTPClient(cfg *HTTPConfig) (*EOSHTTPClient, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	cl := &http.Client{}
+	cl := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	eosClient := EOSHTTPClient{
 		cl:  cl,
@@ -108,6 +112,8 @@ func (c *EOSHTTPClient) Put(ctx context.Context, path string, stream io.Reader, 
 		req.Header.Set("x-gateway-authorization", c.cfg.Authkey)
 		req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
 		req.Header.Set("remote-user", c.cfg.Username)
+
+		fmt.Println("doing request to", req.URL.String())
 
 		res, err := c.cl.Do(req)
 		if err != nil {

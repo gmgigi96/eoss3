@@ -3,8 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"path"
@@ -39,6 +42,11 @@ type Config struct {
 	Gid int `mapstructure:"gid"`
 
 	Username string `mapstructure:"username"`
+
+	// ComputeMD5 on put so the client will be happy
+	// Once EOS will support storing the MD5, this can be retrieved
+	// directly from it.
+	ComputeMD5 bool `mapstructure:"compute_md5"`
 }
 
 func (c *Config) Validate() error {
@@ -378,18 +386,44 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 
 	p := filepath.Join(b.cfg.MountDir, bucket, key)
 
-	if err := b.hcl.Put(ctx, p, po.Body, uint64(length)); err != nil {
-		return s3response.PutObjectOutput{}, err
-	}
+	dir := filepath.Dir(p)
 
-	r, err := b.stat(ctx, p, false)
+	r := b.newNsRequest(ctx)
+	r.Command = &erpc.NSRequest_Mkdir{
+		Mkdir: &erpc.NSRequest_MkdirRequest{
+			Id: &erpc.MDId{
+				Path: []byte(dir),
+			},
+			Recursive: true,
+			Mode:      0750,
+		},
+	}
+	res, err := b.cl.Exec(ctx, r)
 	if err != nil {
 		return s3response.PutObjectOutput{}, err
 	}
 
-	return s3response.PutObjectOutput{
-		ETag: r.Fmd.Etag,
-	}, nil
+	if res.Error.Code != 0 {
+		return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInternalError)
+	}
+
+	var hasher hash.Hash
+	stream := po.Body
+	if b.cfg.ComputeMD5 {
+		hasher = md5.New()
+		stream = io.TeeReader(po.Body, hasher)
+	}
+
+	if err := b.hcl.Put(ctx, p, stream, uint64(length)); err != nil {
+		return s3response.PutObjectOutput{}, err
+	}
+
+	out := s3response.PutObjectOutput{}
+	if b.cfg.ComputeMD5 {
+		out.ETag = hex.EncodeToString(hasher.Sum(nil))
+	}
+
+	return out, nil
 }
 
 func (b *EosBackend) stat(ctx context.Context, path string, bucket bool) (*erpc.MDResponse, error) {
