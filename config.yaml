@@ -1,6 +1,0 @@
----
-ciao: 10
-map:
-  # comment
-  key: value
-  list: [1,2,3]
