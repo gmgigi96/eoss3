@@ -610,6 +610,14 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 
 		key, _ := filepath.Rel(bucketDir, path)
 
+		// TODO: maybe it's possible to skip in the find directly?
+		name := filepath.Base(path)
+		if prefix != "" {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+		}
+
 		var obj s3response.Object
 		if r.Type == erpc.TYPE_CONTAINER {
 			obj.Key = Ptr(key + "/")
