@@ -24,24 +24,38 @@ import (
 )
 
 type Config struct {
-	// URI of the EOS MGM grpc server
-	GrpcURI string `mapstructure:"grpc_uri"`
-	// Authkey is the kay thay authjorizes this client to connect to the EOS GRPC service
+	// URL of the EOS MGM GRPC server
+	GrpcURL string `mapstructure:"grpc_url"`
+	// HttpURL if the EOS HTTP server
+	HttpURL string `mapstructure:"http_url"`
+	// Authkey is the key that authorizes this client to connect to the EOS GRPC service
 	Authkey string `mapstructure:"authkey"`
 	// MountDir is the directory from where the s3 gateway is mounted
 	MountDir string `mapstructure:"mount_dir"`
 
+	// Uid is the user id doing the grpc request
 	Uid int `mapstructure:"uid"`
+	// Gid is the group id doing the grpc request
 	Gid int `mapstructure:"gid"`
+
+	Username string `mapstructure:"username"`
 }
 
 func (c *Config) Validate() error {
-	if c.GrpcURI == "" {
-		return errors.New("grpc_uri not provided")
+	if c.GrpcURL == "" {
+		return errors.New("grpc_url not provided")
+	}
+
+	if c.HttpURL == "" {
+		return errors.New("http_url not provided")
 	}
 
 	if c.Authkey == "" {
 		return errors.New("authkey not provided")
+	}
+
+	if c.Username == "" {
+		return errors.New("username not provided")
 	}
 
 	if c.MountDir == "" {
@@ -55,23 +69,35 @@ type EosBackend struct {
 	cfg  *Config
 	conn *grpc.ClientConn
 	cl   erpc.EosClient
+	hcl  *EOSHTTPClient
 }
 
 func New(cfg *Config) (*EosBackend, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(cfg.GrpcURI, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(cfg.GrpcURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("error getting grpc client: %w", err)
 	}
 
 	cl := erpc.NewEosClient(conn)
+	hcl, err := NewEOSHTTPClient(&HTTPConfig{
+		ServerURL: cfg.HttpURL,
+		Authkey:   cfg.Authkey,
+		Uid:       cfg.Uid,
+		Gid:       cfg.Gid,
+		Username:  cfg.Username,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	be := &EosBackend{
 		cfg:  cfg,
 		conn: conn,
 		cl:   cl,
+		hcl:  hcl,
 	}
 	return be, nil
 }
@@ -348,15 +374,84 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 	return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) HeadObject(context.Context, *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
+func (b *EosBackend) stat(ctx context.Context, path string, bucket bool) (*erpc.MDResponse, error) {
+	req := &erpc.MDRequest{
+		Type: erpc.TYPE_STAT,
+		Id: &erpc.MDId{
+			Path: []byte(path),
+		},
+		Authkey: b.cfg.Authkey,
+		Role: &erpc.RoleId{
+			Uid: uint64(b.cfg.Uid),
+			Gid: uint64(b.cfg.Gid),
+		},
+	}
+	res, err := b.cl.MD(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := res.Recv()
+	if err != nil {
+		// TODO: this is very bad, but there is no other way
+		// to get this error if the entry does not exist
+		if bucket {
+			return nil, s3err.GetAPIError(s3err.ErrNoSuchBucket)
+		}
+		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+	}
+	return r, nil
+}
+
+func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	fmt.Println("HeadObject func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	bucket := *req.Bucket
+	key := *req.Key
+
+	p := filepath.Join(b.cfg.MountDir, bucket, key)
+
+	r, err := b.stat(ctx, p, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.Type == erpc.TYPE_CONTAINER || r.Fmd == nil {
+		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+	}
+
+	return &s3.HeadObjectOutput{
+		ContentLength: Ptr(int64(r.Fmd.Size)),
+		ETag:          &r.Fmd.Etag,
+		LastModified:  Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec))),
+	}, nil
 }
 
 func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 	fmt.Println("GetObject func")
 
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	bucket := *req.Bucket
+	key := *req.Key
+
+	p := filepath.Join(b.cfg.MountDir, bucket, key)
+
+	r, err := b.stat(ctx, p, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.Fmd == nil {
+		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+	}
+
+	file, err := b.hcl.Get(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+
+	return &s3.GetObjectOutput{
+		Body:          file,
+		ContentLength: Ptr(int64(r.Fmd.Size)),
+	}, nil
 }
 
 func (b *EosBackend) GetObjectAcl(context.Context, *s3.GetObjectAclInput) (*s3.GetObjectAclOutput, error) {
@@ -378,27 +473,12 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 	fmt.Println("ListObjects func")
 
 	bucket := *req.Bucket
-	p := path.Join(b.cfg.MountDir, bucket)
+	p := filepath.Join(b.cfg.MountDir, bucket)
 
 	// check if the bucket exists
-	r := &erpc.MDRequest{
-		Type: erpc.TYPE_STAT,
-		Id: &erpc.MDId{
-			Path: []byte(p),
-		},
-		Authkey: b.cfg.Authkey,
-		Role: &erpc.RoleId{
-			Uid: uint64(b.cfg.Uid),
-			Gid: uint64(b.cfg.Gid),
-		},
-	}
-	res, err := b.cl.MD(ctx, r)
+	_, err := b.stat(ctx, p, true)
 	if err != nil {
 		return s3response.ListObjectsResult{}, err
-	}
-
-	if _, err := res.Recv(); err != nil {
-		return s3response.ListObjectsResult{}, s3err.GetAPIError(s3err.ErrNoSuchBucket)
 	}
 
 	// list the content
