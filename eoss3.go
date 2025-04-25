@@ -547,9 +547,37 @@ func (b *EosBackend) ListObjectsV2(context.Context, *s3.ListObjectsV2Input) (s3r
 	return s3response.ListObjectsV2Result{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) DeleteObject(context.Context, *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+func (b *EosBackend) DeleteObject(ctx context.Context, req *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
 	fmt.Println("DeleteObject func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	bucket := *req.Bucket
+	key := *req.Key
+
+	p := filepath.Join(b.cfg.MountDir, bucket, key)
+
+	// we have to check that this is an actual file on EOS
+	_, err := b.stat(ctx, p, false)
+	if err != nil {
+		return nil, err
+	}
+
+	r := b.newNsRequest(ctx)
+	r.Command = &erpc.NSRequest_Rm{
+		Rm: &erpc.NSRequest_RmRequest{
+			Id: &erpc.MDId{
+				Path: []byte(p),
+			},
+		},
+	}
+	res, err := b.cl.Exec(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.Error.Code != 0 {
+		return nil, fmt.Errorf("got error (%d): %s", res.Error.Code, res.Error.Msg)
+	}
+
+	return &s3.DeleteObjectOutput{}, nil
 }
 
 func (b *EosBackend) DeleteObjects(context.Context, *s3.DeleteObjectsInput) (s3response.DeleteResult, error) {
@@ -624,7 +652,7 @@ func (b *EosBackend) PutObjectLockConfiguration(_ context.Context, bucket string
 
 func (b *EosBackend) GetObjectLockConfiguration(_ context.Context, bucket string) ([]byte, error) {
 	fmt.Println("GetObjectLockConfiguration func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	return []byte("{}"), nil // TODO
 }
 
 func (b *EosBackend) PutObjectRetention(_ context.Context, bucket, object, versionId string, bypass bool, retention []byte) error {
