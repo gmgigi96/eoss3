@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -340,7 +343,7 @@ func (b *EosBackend) UploadPartCopy(context.Context, *s3.UploadPartCopyInput) (s
 	return s3response.CopyPartResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) PutObject(context.Context, s3response.PutObjectInput) (s3response.PutObjectOutput, error) {
+func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput) (s3response.PutObjectOutput, error) {
 	fmt.Println("PutObject func")
 	return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
@@ -350,8 +353,9 @@ func (b *EosBackend) HeadObject(context.Context, *s3.HeadObjectInput) (*s3.HeadO
 	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) GetObject(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 	fmt.Println("GetObject func")
+
 	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
@@ -370,9 +374,92 @@ func (b *EosBackend) CopyObject(context.Context, s3response.CopyObjectInput) (*s
 	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) ListObjects(context.Context, *s3.ListObjectsInput) (s3response.ListObjectsResult, error) {
+func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) (s3response.ListObjectsResult, error) {
 	fmt.Println("ListObjects func")
-	return s3response.ListObjectsResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
+
+	bucket := *req.Bucket
+	p := path.Join(b.cfg.MountDir, bucket)
+
+	// check if the bucket exists
+	r := &erpc.MDRequest{
+		Type: erpc.TYPE_STAT,
+		Id: &erpc.MDId{
+			Path: []byte(p),
+		},
+		Authkey: b.cfg.Authkey,
+		Role: &erpc.RoleId{
+			Uid: uint64(b.cfg.Uid),
+			Gid: uint64(b.cfg.Gid),
+		},
+	}
+	res, err := b.cl.MD(ctx, r)
+	if err != nil {
+		return s3response.ListObjectsResult{}, err
+	}
+
+	if _, err := res.Recv(); err != nil {
+		return s3response.ListObjectsResult{}, s3err.GetAPIError(s3err.ErrNoSuchBucket)
+	}
+
+	// list the content
+	// TODO: consider the option passed, for now we list everything
+	// without any filtering, max entries, ...
+
+	findReq := &erpc.FindRequest{
+		Type: erpc.TYPE_LISTING,
+		Id: &erpc.MDId{
+			Path: []byte(p),
+		},
+		Role: &erpc.RoleId{
+			Uid: uint64(b.cfg.Uid),
+			Gid: uint64(b.cfg.Gid),
+		},
+		Authkey:  b.cfg.Authkey,
+		Maxdepth: math.MaxUint64, // FIXME: very bad this one
+	}
+	findRes, err := b.cl.Find(ctx, findReq)
+	if err != nil {
+		return s3response.ListObjectsResult{}, err
+	}
+
+	listRes := s3response.ListObjectsResult{
+		Name:        &bucket,
+		IsTruncated: Ptr(false),
+	}
+
+	for {
+		r, err := findRes.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return s3response.ListObjectsResult{}, err
+		}
+
+		if r.Type == erpc.TYPE_CONTAINER || r.Fmd == nil {
+			continue
+		}
+
+		key, _ := filepath.Rel(p, string(r.Fmd.Path))
+
+		listRes.Contents = append(listRes.Contents, s3response.Object{
+			ETag:         &r.Fmd.Etag,
+			StorageClass: types.ObjectStorageClassStandard,
+			LastModified: Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec))),
+			Key:          &key,
+			Size:         Ptr(int64(r.Fmd.Size)),
+			Owner: &types.Owner{
+				// TODO: check this
+				ID: Ptr(strconv.FormatUint(r.Fmd.Uid, 10)),
+			},
+		})
+	}
+
+	return listRes, nil
+}
+
+func Ptr[T any](v T) *T {
+	return &v
 }
 
 func (b *EosBackend) ListObjectsV2(context.Context, *s3.ListObjectsV2Input) (s3response.ListObjectsV2Result, error) {
