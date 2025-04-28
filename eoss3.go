@@ -573,6 +573,16 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 		Authkey:  b.cfg.Authkey,
 		Maxdepth: 1,
 	}
+
+	if prefix != "" {
+		// we filter on server side in the find
+		findReq.Selection = &erpc.MDSelection{
+			Select:         true,
+			RegexpFilename: []byte("^" + prefix),
+			Symlink:        false,
+		}
+	}
+
 	findRes, err := b.cl.Find(ctx, findReq)
 	if err != nil {
 		return s3response.ListObjectsResult{}, err
@@ -604,19 +614,12 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 		} else {
 			path = string(r.Fmd.Path)
 		}
+
 		if isHiddenResource(path) {
 			continue
 		}
 
 		key, _ := filepath.Rel(bucketDir, path)
-
-		// TODO: maybe it's possible to skip in the find directly?
-		name := filepath.Base(path)
-		if prefix != "" {
-			if !strings.HasPrefix(name, prefix) {
-				continue
-			}
-		}
 
 		var obj s3response.Object
 		if r.Type == erpc.TYPE_CONTAINER {
@@ -625,6 +628,7 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 			obj.Size = Ptr(int64(0))
 			obj.StorageClass = types.ObjectStorageClassStandard
 		} else {
+			// TODO: the etag for s3 is the md5 of the resource
 			obj.ETag = &r.Fmd.Etag
 			obj.StorageClass = types.ObjectStorageClassStandard
 			obj.LastModified = Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec)))
