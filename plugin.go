@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/gmgigi96/eoss3/registry"
 	"github.com/mitchellh/mapstructure"
 	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/plugins"
@@ -28,7 +29,17 @@ func (plugin) New(config string) (backend.Backend, error) {
 	if err := mapstructure.Decode(m, &cfg); err != nil {
 		return nil, err
 	}
-	be, err := New(&cfg)
+
+	regCfg, ok := m["registry"].(map[string]any)
+	if !ok {
+		regCfg = make(map[string]any)
+	}
+	registry, err := registry.New(regCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	be, err := New(&cfg, registry)
 	if err != nil {
 		return nil, err
 	}

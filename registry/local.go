@@ -5,10 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/mitchellh/mapstructure"
 )
 
 type LocalRegistry struct {
 	base string
+}
+
+type Config struct {
+	Folder string `mapstructure:"folder"`
 }
 
 const (
@@ -16,7 +22,23 @@ const (
 	usersFolder   = "users"
 )
 
+func NewLocalRegistryFromConfig(m map[string]any) (*LocalRegistry, error) {
+	var cfg Config
+	if err := mapstructure.Decode(m, &cfg); err != nil {
+		return nil, err
+	}
+	return NewLocalRegistry(cfg.Folder)
+}
+
 func NewLocalRegistry(folder string) (*LocalRegistry, error) {
+	if folder == "" {
+		var err error
+		folder, err = os.MkdirTemp("", "eoss3")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	r := LocalRegistry{
 		base: folder,
 	}

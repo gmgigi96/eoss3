@@ -33,3 +33,19 @@ var (
 	ErrMappingAlreadyExisting = errors.New("mapping already existing")
 	ErrNoSuchBucket           = errors.New("no such bucket")
 )
+
+func New(c map[string]any) (Registry, error) {
+	driver, ok := c["driver"]
+	if !ok {
+		driver = "memory"
+	}
+
+	switch driver {
+	case "memory":
+		return NewMemoryRegistry()
+	case "local":
+		return NewLocalRegistryFromConfig(c)
+	}
+
+	return nil, errors.New("registry not found")
+}
