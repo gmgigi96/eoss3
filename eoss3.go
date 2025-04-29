@@ -11,6 +11,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	erpc "github.com/cern-eos/go-eosgrpc"
+	"github.com/gmgigi96/eoss3/registry"
+	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3response"
 	"github.com/versity/versitygw/s3select"
@@ -77,9 +80,11 @@ type EosBackend struct {
 	conn *grpc.ClientConn
 	cl   erpc.EosClient
 	hcl  *EOSHTTPClient
+
+	reg registry.Registry
 }
 
-func New(cfg *Config) (*EosBackend, error) {
+func New(cfg *Config, reg registry.Registry) (*EosBackend, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -105,6 +110,7 @@ func New(cfg *Config) (*EosBackend, error) {
 		conn: conn,
 		cl:   cl,
 		hcl:  hcl,
+		reg:  reg,
 	}
 	return be, nil
 }
@@ -127,67 +133,79 @@ func isHiddenResource(name string) bool {
 	return isVersionFolder(name) || isAtomicFile(name)
 }
 
-func (b *EosBackend) ListBuckets(ctx context.Context, req s3response.ListBucketsInput) (s3response.ListAllMyBucketsResult, error) {
-	fdrq := &erpc.FindRequest{
-		Type: erpc.TYPE_LISTING,
-		Id: &erpc.MDId{
-			Path: []byte(b.cfg.MountDir),
-		},
-		Role: &erpc.RoleId{
-			Uid: uint64(b.cfg.Uid),
-			Gid: uint64(b.cfg.Gid),
-		},
-		Maxdepth: 1,
-		Authkey:  b.cfg.Authkey,
+func prepareListBucketResult(buckets []registry.Mapping, prefix string, tkn string, max int32) (entries []s3response.ListAllMyBucketsEntry, ctoken string) {
+	// TODO: prefix, continuation token and max entries can be moved later to the registry
+
+	// The continuation token is the bucket name in the mapping list
+	i := slices.IndexFunc(buckets, func(m registry.Mapping) bool {
+		return m.Bucket == tkn
+	})
+	if i >= 0 {
+		buckets = buckets[i:]
 	}
 
-	res, err := b.cl.Find(ctx, fdrq)
-	if err != nil {
-		return s3response.ListAllMyBucketsResult{}, s3err.GetAPIError(s3err.ErrInternalError)
+	entries = make([]s3response.ListAllMyBucketsEntry, 0, max)
+	for i, b := range buckets {
+		if i == int(max-1) {
+			return entries, b.Bucket
+		}
+		if !strings.HasPrefix(b.Bucket, prefix) {
+			continue
+		}
+		entries = append(entries, s3response.ListAllMyBucketsEntry{
+			Name:         b.Bucket,
+			CreationDate: b.CreatedAt,
+		})
 	}
 
-	var listRes s3response.ListAllMyBucketsResult
+	return entries, ""
+}
 
-	i := 0
-	for {
-		r, err := res.Recv()
+func getUser(ctx context.Context) (auth.Account, bool) {
+	acct, ok := ctx.Value("account").(auth.Account)
+	return acct, ok
+}
+
+func (b *EosBackend) ListBuckets(ctx context.Context, input s3response.ListBucketsInput) (s3response.ListAllMyBucketsResult, error) {
+	var buckets []s3response.ListAllMyBucketsEntry
+	var ctoken string
+	if input.IsAdmin {
+		// returns all the buckets for admin user
+		m, err := b.reg.ListMappings()
 		if err != nil {
-			if err == io.EOF {
-				break
-			}
-
 			return s3response.ListAllMyBucketsResult{}, err
 		}
-
-		// only folders can be buckets
-		if r.Type == erpc.TYPE_FILE || r.Cmd == nil {
-			continue
+		buckets, ctoken = prepareListBucketResult(m, input.Prefix, input.ContinuationToken, input.MaxBuckets)
+	} else {
+		acct, ok := getUser(ctx)
+		if !ok {
+			// TODO: can this happen??
+			return s3response.ListAllMyBucketsResult{}, errors.New("no user in request")
 		}
-
-		i++
-		if i == 1 {
-			// first entry is the folder itself
-			continue
+		bs, err := b.reg.ListBuckets(acct.UserID)
+		if err != nil {
+			return s3response.ListAllMyBucketsResult{}, err
 		}
-
-		name := string(r.Cmd.Name)
-		if !strings.HasPrefix(name, req.Prefix) {
-			continue
+		lst := make([]registry.Mapping, 0, len(bs))
+		for _, name := range bs {
+			m, err := b.reg.GetMapping(name)
+			if err == nil {
+				lst = append(lst, m)
+			}
 		}
-
-		if isHiddenResource(name) {
-			continue
-		}
-
-		entry := s3response.ListAllMyBucketsEntry{
-			Name:         name,
-			CreationDate: time.Unix(int64(r.Cmd.Ctime.Sec), int64(r.Cmd.Ctime.NSec)),
-		}
-
-		listRes.Buckets.Bucket = append(listRes.Buckets.Bucket, entry)
+		buckets, ctoken = prepareListBucketResult(lst, input.Prefix, input.ContinuationToken, input.MaxBuckets)
 	}
 
-	return listRes, nil
+	return s3response.ListAllMyBucketsResult{
+		Buckets: s3response.ListAllMyBucketsList{
+			Bucket: buckets,
+		},
+		Owner: s3response.CanonicalUser{
+			ID: input.Owner,
+		},
+		ContinuationToken: ctoken,
+		Prefix:            input.Prefix,
+	}, nil
 }
 
 func (b *EosBackend) HeadBucket(context.Context, *s3.HeadBucketInput) (*s3.HeadBucketOutput, error) {
