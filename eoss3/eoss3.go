@@ -1,4 +1,4 @@
-package main
+package eoss3
 
 import (
 	"bufio"
@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	erpc "github.com/cern-eos/go-eosgrpc"
+	"github.com/gmgigi96/eoss3/eoshttp"
 	"github.com/gmgigi96/eoss3/registry"
 	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/s3err"
@@ -79,7 +80,7 @@ type EosBackend struct {
 	cfg  *Config
 	conn *grpc.ClientConn
 	cl   erpc.EosClient
-	hcl  *EOSHTTPClient
+	hcl  *eoshttp.EOSHTTPClient
 
 	reg registry.Registry
 }
@@ -94,7 +95,7 @@ func New(cfg *Config, reg registry.Registry) (*EosBackend, error) {
 	}
 
 	cl := erpc.NewEosClient(conn)
-	hcl, err := NewEOSHTTPClient(&HTTPConfig{
+	hcl, err := eoshttp.NewEOSHTTPClient(&eoshttp.HTTPConfig{
 		ServerURL: cfg.HttpURL,
 		Authkey:   cfg.Authkey,
 		Uid:       cfg.Uid,

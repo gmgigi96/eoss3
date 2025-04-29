@@ -9,7 +9,7 @@ build: $(PLUGIN)
 
 .PHONY: $(PLUGIN)
 $(PLUGIN):
-	$(GOBUILD) -buildmode=plugin -o $(PLUGIN) ./...
+	$(GOBUILD) -buildmode=plugin -o $(PLUGIN) plugin.go
 
 .PHONY: clean
 clean:

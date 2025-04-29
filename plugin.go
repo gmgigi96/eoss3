@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/gmgigi96/eoss3/eoss3"
 	"github.com/gmgigi96/eoss3/registry"
 	"github.com/mitchellh/mapstructure"
 	"github.com/versity/versitygw/backend"
@@ -25,7 +26,7 @@ func (plugin) New(config string) (backend.Backend, error) {
 		return nil, err
 	}
 
-	var cfg Config
+	var cfg eoss3.Config
 	if err := mapstructure.Decode(m, &cfg); err != nil {
 		return nil, err
 	}
@@ -39,7 +40,7 @@ func (plugin) New(config string) (backend.Backend, error) {
 		return nil, err
 	}
 
-	be, err := New(&cfg, registry)
+	be, err := eoss3.New(&cfg, registry)
 	if err != nil {
 		return nil, err
 	}
