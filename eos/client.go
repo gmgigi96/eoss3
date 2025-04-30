@@ -242,6 +242,27 @@ func (c *Client) Rmdir(ctx context.Context, auth Auth, path string) error {
 	return nil
 }
 
+func (c *Client) Remove(ctx context.Context, auth Auth, path string) error {
+	req := c.initNsRequest(auth)
+	req.Command = &erpc.NSRequest_Rm{
+		Rm: &erpc.NSRequest_RmRequest{
+			Id: &erpc.MDId{
+				Path: []byte(path),
+			},
+		},
+	}
+	res, err := c.grpcClient.Exec(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	if res.Error.Code != 0 {
+		return errors.New(res.Error.Msg)
+	}
+
+	return nil
+}
+
 func (c *Client) buildFullHttpUrl(auth Auth, path string) string {
 	fullurl := strings.TrimRight(c.httpUrl, "/")
 	fullurl += "/"
@@ -253,12 +274,12 @@ func (c *Client) buildFullHttpUrl(auth Auth, path string) string {
 	return final
 }
 
-func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadCloser, error) {
+func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadCloser, int64, error) {
 	url := c.buildFullHttpUrl(auth, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	for {
@@ -268,7 +289,7 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 
 		res, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		if res.StatusCode == http.StatusFound || res.StatusCode == http.StatusTemporaryRedirect {
@@ -276,21 +297,21 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 
 			loc, err := res.Location()
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			req, err = http.NewRequestWithContext(ctx, http.MethodGet, loc.String(), nil)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			continue
 		}
 
 		if res.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("got non OK status code from %s: %d", req.URL.String(), res.StatusCode)
+			return nil, 0, fmt.Errorf("got non OK status code from %s: %d", req.URL.String(), res.StatusCode)
 		}
 
-		return res.Body, nil
+		return res.Body, res.ContentLength, nil
 	}
 }
 

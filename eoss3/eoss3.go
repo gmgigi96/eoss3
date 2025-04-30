@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -19,14 +18,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	erpc "github.com/cern-eos/go-eosgrpc"
-	"github.com/gmgigi96/eoss3/eoshttp"
-	"github.com/gmgigi96/eoss3/registry"
+	"github.com/gmgigi96/eoss3/eos"
+	"github.com/gmgigi96/eoss3/meta"
 	"github.com/versity/versitygw/auth"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3response"
 	"github.com/versity/versitygw/s3select"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
@@ -36,15 +33,6 @@ type Config struct {
 	HttpURL string `mapstructure:"http_url"`
 	// Authkey is the key that authorizes this client to connect to the EOS GRPC service
 	Authkey string `mapstructure:"authkey"`
-	// MountDir is the directory from where the s3 gateway is mounted
-	MountDir string `mapstructure:"mount_dir"`
-
-	// Uid is the user id doing the grpc request
-	Uid int `mapstructure:"uid"`
-	// Gid is the group id doing the grpc request
-	Gid int `mapstructure:"gid"`
-
-	Username string `mapstructure:"username"`
 
 	// ComputeMD5 on put so the client will be happy
 	// Once EOS will support storing the MD5, this can be retrieved
@@ -65,42 +53,25 @@ func (c *Config) Validate() error {
 		return errors.New("authkey not provided")
 	}
 
-	if c.Username == "" {
-		return errors.New("username not provided")
-	}
-
-	if c.MountDir == "" {
-		c.MountDir = "/"
-	}
-
 	return nil
 }
 
 type EosBackend struct {
-	cfg  *Config
-	conn *grpc.ClientConn
-	cl   erpc.EosClient
-	hcl  *eoshttp.EOSHTTPClient
+	cfg *Config
 
-	reg registry.Registry
+	eos  *eos.Client
+	meta meta.BucketStorer
 }
 
-func New(cfg *Config, reg registry.Registry) (*EosBackend, error) {
+func New(cfg *Config, meta meta.BucketStorer) (*EosBackend, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(cfg.GrpcURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("error getting grpc client: %w", err)
-	}
 
-	cl := erpc.NewEosClient(conn)
-	hcl, err := eoshttp.NewEOSHTTPClient(&eoshttp.HTTPConfig{
-		ServerURL: cfg.HttpURL,
-		Authkey:   cfg.Authkey,
-		Uid:       cfg.Uid,
-		Gid:       cfg.Gid,
-		Username:  cfg.Username,
+	eosCl, err := eos.NewClient(eos.Config{
+		GrpcURL: cfg.GrpcURL,
+		HttpURL: cfg.HttpURL,
+		AuthKey: cfg.Authkey,
 	})
 	if err != nil {
 		return nil, err
@@ -108,38 +79,25 @@ func New(cfg *Config, reg registry.Registry) (*EosBackend, error) {
 
 	be := &EosBackend{
 		cfg:  cfg,
-		conn: conn,
-		cl:   cl,
-		hcl:  hcl,
-		reg:  reg,
+		eos:  eosCl,
+		meta: meta,
 	}
 	return be, nil
 }
 
-func (b *EosBackend) Shutdown() {
-	_ = b.conn.Close()
-}
+func (b *EosBackend) Shutdown() { _ = b.eos.Close() }
 
 func (b *EosBackend) String() string { return "EOS" }
 
-func isVersionFolder(name string) bool {
-	return strings.Contains(name, ".sys.v#.")
+func isHiddenResource(path string) bool {
+	return eos.IsVersionFolder(path) || eos.IsAtomicFile(path)
 }
 
-func isAtomicFile(name string) bool {
-	return strings.Contains(name, ".sys.a#")
-}
-
-func isHiddenResource(name string) bool {
-	return isVersionFolder(name) || isAtomicFile(name)
-}
-
-func prepareListBucketResult(buckets []registry.Mapping, prefix string, tkn string, max int32) (entries []s3response.ListAllMyBucketsEntry, ctoken string) {
+func prepareListBucketResult(buckets []meta.Bucket, prefix string, tkn string, max int32) (entries []s3response.ListAllMyBucketsEntry, ctoken string) {
 	// TODO: prefix, continuation token and max entries can be moved later to the registry
 
-	// The continuation token is the bucket name in the mapping list
-	i := slices.IndexFunc(buckets, func(m registry.Mapping) bool {
-		return m.Bucket == tkn
+	i := slices.IndexFunc(buckets, func(bucket meta.Bucket) bool {
+		return bucket.Name == tkn
 	})
 	if i >= 0 {
 		buckets = buckets[i:]
@@ -148,13 +106,13 @@ func prepareListBucketResult(buckets []registry.Mapping, prefix string, tkn stri
 	entries = make([]s3response.ListAllMyBucketsEntry, 0, max)
 	for i, b := range buckets {
 		if i == int(max-1) {
-			return entries, b.Bucket
+			return entries, b.Name
 		}
-		if !strings.HasPrefix(b.Bucket, prefix) {
+		if !strings.HasPrefix(b.Name, prefix) {
 			continue
 		}
 		entries = append(entries, s3response.ListAllMyBucketsEntry{
-			Name:         b.Bucket,
+			Name:         b.Name,
 			CreationDate: b.CreatedAt,
 		})
 	}
@@ -162,7 +120,7 @@ func prepareListBucketResult(buckets []registry.Mapping, prefix string, tkn stri
 	return entries, ""
 }
 
-func getUser(ctx context.Context) (auth.Account, bool) {
+func getLoggedAccount(ctx context.Context) (auth.Account, bool) {
 	acct, ok := ctx.Value("account").(auth.Account)
 	return acct, ok
 }
@@ -172,24 +130,24 @@ func (b *EosBackend) ListBuckets(ctx context.Context, input s3response.ListBucke
 	var ctoken string
 	if input.IsAdmin {
 		// returns all the buckets for admin user
-		m, err := b.reg.ListMappings()
+		m, err := b.meta.ListBuckets()
 		if err != nil {
 			return s3response.ListAllMyBucketsResult{}, err
 		}
 		buckets, ctoken = prepareListBucketResult(m, input.Prefix, input.ContinuationToken, input.MaxBuckets)
 	} else {
-		acct, ok := getUser(ctx)
+		acct, ok := getLoggedAccount(ctx)
 		if !ok {
 			// TODO: can this happen??
 			return s3response.ListAllMyBucketsResult{}, errors.New("no user in request")
 		}
-		bs, err := b.reg.ListBuckets(acct.UserID)
+		bs, err := b.meta.ListBucketsByUser(acct.UserID)
 		if err != nil {
 			return s3response.ListAllMyBucketsResult{}, err
 		}
-		lst := make([]registry.Mapping, 0, len(bs))
+		lst := make([]meta.Bucket, 0, len(bs))
 		for _, name := range bs {
-			m, err := b.reg.GetMapping(name)
+			m, err := b.meta.GetBucket(name)
 			if err == nil {
 				lst = append(lst, m)
 			}
@@ -242,75 +200,85 @@ func (b *EosBackend) GetBucketAcl(ctx context.Context, req *s3.GetBucketAclInput
 	return nil, nil
 }
 
-func (b *EosBackend) newNsRequest(_ context.Context) *erpc.NSRequest {
-	return &erpc.NSRequest{
-		Role: &erpc.RoleId{
-			Uid: uint64(b.cfg.Uid),
-			Gid: uint64(b.cfg.Gid),
-		},
-		Authkey: b.cfg.Authkey,
-	}
-}
-
 func (b *EosBackend) CreateBucket(ctx context.Context, req *s3.CreateBucketInput, acl []byte) error {
-	fmt.Println("CreateBucket func")
-	r := b.newNsRequest(ctx)
+	name := *req.Bucket
 
-	path := path.Join(b.cfg.MountDir, *req.Bucket)
-
-	r.Command = &erpc.NSRequest_Mkdir{
-		Mkdir: &erpc.NSRequest_MkdirRequest{
-			Id: &erpc.MDId{
-				Path: []byte(path),
-			},
-			Recursive: true,
-			Mode:      0750,
-		},
+	if _, err := b.meta.GetBucket(name); err == nil {
+		return s3err.GetAPIError(s3err.ErrBucketAlreadyExists)
 	}
 
-	res, err := b.cl.Exec(ctx, r)
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+
+	defaultPath, err := b.meta.GetDefaultBucketPath(acct.UserID)
 	if err != nil {
 		return err
 	}
 
-	if res.Error != nil && res.Error.Code != 0 {
-		// TODO: check error code
-		fmt.Println(res.Error)
-		return s3err.GetAPIError(s3err.ErrInternalError)
+	bucketPath := filepath.Join(defaultPath, name)
+
+	bucket := meta.Bucket{
+		Name:      name,
+		Path:      bucketPath,
+		CreatedAt: time.Now(),
+	}
+	if err := b.meta.CreateBucket(bucket); err != nil {
+		return err
+	}
+
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+	if err := b.eos.Mkdir(ctx, auth, bucketPath, 0755); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (b *EosBackend) PutBucketAcl(_ context.Context, bucket string, data []byte) error {
+func (b *EosBackend) PutBucketAcl(_ context.Context, name string, data []byte) error {
 	fmt.Println("PutBucketAcl func")
 	return s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) DeleteBucket(ctx context.Context, bucket string) error {
-	fmt.Println("DeleteBucket func")
-	r := b.newNsRequest(ctx)
-	path := path.Join(b.cfg.MountDir, bucket)
-
-	r.Command = &erpc.NSRequest_Rmdir{
-		Rmdir: &erpc.NSRequest_RmdirRequest{
-			Id: &erpc.MDId{
-				Path: []byte(path),
-			},
-		},
+func (b *EosBackend) DeleteBucket(ctx context.Context, name string) error {
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return s3err.GetAPIError(s3err.ErrAccessDenied)
 	}
 
-	res, err := b.cl.Exec(ctx, r)
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
 		return err
 	}
 
-	if res.Error != nil && res.Error.Code != 0 {
-		fmt.Println(res.Error)
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+	info, err := b.eos.Stat(ctx, auth, bucket.Path)
+	if err != nil {
+		return err
+	}
+
+	if info.Type != erpc.TYPE_CONTAINER {
 		return s3err.GetAPIError(s3err.ErrInternalError)
 	}
 
-	return nil
+	if info.Cmd.Containers+info.Cmd.Files != 0 {
+		// There are still data inside the folder
+		// Remove the bucket is then not possible.
+		return s3err.GetAPIError(s3err.ErrBucketNotEmpty)
+	}
+
+	if err := b.eos.Rmdir(ctx, auth, bucket.Path); err != nil {
+		return err
+	}
+
+	return b.meta.DeleteBucket(name)
 }
 
 func (b *EosBackend) PutBucketVersioning(_ context.Context, bucket string, status types.BucketVersioningStatus) error {
@@ -406,33 +374,23 @@ func (b *EosBackend) UploadPartCopy(context.Context, *s3.UploadPartCopyInput) (s
 func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput) (s3response.PutObjectOutput, error) {
 	fmt.Println("PutObject func")
 
-	bucket := *po.Bucket
+	name := *po.Bucket
 	key := *po.Key
 	length := *po.ContentLength
 
-	p := filepath.Join(b.cfg.MountDir, bucket, key)
-
-	dir := filepath.Dir(p)
-
-	r := b.newNsRequest(ctx)
-	r.Command = &erpc.NSRequest_Mkdir{
-		Mkdir: &erpc.NSRequest_MkdirRequest{
-			Id: &erpc.MDId{
-				Path: []byte(dir),
-			},
-			Recursive: true,
-			Mode:      0750,
-		},
-	}
-	res, err := b.cl.Exec(ctx, r)
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
 		return s3response.PutObjectOutput{}, err
 	}
 
-	if res.Error.Code != 0 {
-		return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrInternalError)
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrAccessDenied)
 	}
 
+	// Compute temporarily the chechsum on the gateway side
+	// to make the client happy for now. Once EOS has
+	// this feature available, this one will be removed from here.
 	var hasher hash.Hash
 	stream := po.Body
 	if b.cfg.ComputeMD5 {
@@ -440,7 +398,22 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 		stream = io.TeeReader(po.Body, hasher)
 	}
 
-	if err := b.hcl.Put(ctx, p, stream, uint64(length)); err != nil {
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+
+	path := filepath.Join(bucket.Path, key)
+
+	// Create recursively all the directories
+	if strings.ContainsRune(key, '/') {
+		dir := filepath.Dir(path)
+		if err := b.eos.Mkdir(ctx, auth, dir, 0755); err != nil {
+			return s3response.PutObjectOutput{}, err
+		}
+	}
+
+	if err := b.eos.Upload(ctx, auth, path, stream, uint64(length)); err != nil {
 		return s3response.PutObjectOutput{}, err
 	}
 
@@ -452,83 +425,84 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 	return out, nil
 }
 
-func (b *EosBackend) stat(ctx context.Context, path string, bucket bool) (*erpc.MDResponse, error) {
-	req := &erpc.MDRequest{
-		Type: erpc.TYPE_STAT,
-		Id: &erpc.MDId{
-			Path: []byte(path),
-		},
-		Authkey: b.cfg.Authkey,
-		Role: &erpc.RoleId{
-			Uid: uint64(b.cfg.Uid),
-			Gid: uint64(b.cfg.Gid),
-		},
-	}
-	res, err := b.cl.MD(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := res.Recv()
-	if err != nil {
-		// TODO: this is very bad, but there is no other way
-		// to get this error if the entry does not exist
-		if bucket {
-			return nil, s3err.GetAPIError(s3err.ErrNoSuchBucket)
-		}
-		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
-	}
-	return r, nil
-}
-
 func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
-	fmt.Println("HeadObject func")
-	bucket := *req.Bucket
+	name := *req.Bucket
 	key := *req.Key
 
-	p := filepath.Join(b.cfg.MountDir, bucket, key)
-
-	r, err := b.stat(ctx, p, false)
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
 		return nil, err
 	}
 
-	if r.Type == erpc.TYPE_CONTAINER || r.Fmd == nil {
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+
+	objpath := filepath.Join(bucket.Path, key)
+	info, err := b.eos.Stat(ctx, auth, objpath)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Type != erpc.TYPE_FILE || info.Fmd == nil {
 		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
 
 	return &s3.HeadObjectOutput{
-		ContentLength: Ptr(int64(r.Fmd.Size)),
-		ETag:          &r.Fmd.Etag,
-		LastModified:  Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec))),
+		ContentLength: Ptr(int64(info.Fmd.Size)),
+		ETag:          &info.Fmd.Etag, // TODO: this is actually the MD5 of the file
+		LastModified:  Ptr(time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))),
 	}, nil
 }
 
 func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
-	fmt.Println("GetObject func")
-
-	bucket := *req.Bucket
+	name := *req.Bucket
 	key := *req.Key
 
-	p := filepath.Join(b.cfg.MountDir, bucket, key)
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
 
-	r, err := b.stat(ctx, p, false)
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
 		return nil, err
 	}
 
-	if r.Fmd == nil {
-		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
 	}
+	path := filepath.Join(bucket.Path, key)
 
-	file, err := b.hcl.Get(ctx, p)
+	file, size, err := b.eos.Download(ctx, auth, path)
 	if err != nil {
 		return nil, err
+	}
+
+	if size < 0 {
+		// The size is not available
+		// A stat is requested to know the size of the file
+		info, err := b.eos.Stat(ctx, auth, path)
+		if err != nil {
+			return nil, err
+		}
+		if info.Type != erpc.TYPE_FILE {
+			return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+		}
+
+		size = int64(info.Fmd.Size)
 	}
 
 	return &s3.GetObjectOutput{
 		Body:          file,
-		ContentLength: Ptr(int64(r.Fmd.Size)),
+		ContentLength: &size,
 	}, nil
 }
 
@@ -547,125 +521,97 @@ func (b *EosBackend) CopyObject(context.Context, s3response.CopyObjectInput) (*s
 	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) (s3response.ListObjectsResult, error) {
-	fmt.Println("ListObjects func")
+// gets the deepest directory by concatenating the bucket path with the prefix, considering
+// that the last part of the prefix (after the last /), can be used to filter resources with
+// a prefix inside a directory. The new returned prefix will then contain in this case
+// the last part after /.
+// For example:
+//   - bucketpath = "/eos/user/g/gdelmont/bucket" and prefix = "obj"
+//     objdir = "/eos/user/g/gdelmont/bucket" and newprefix = "obj"
+//   - bucketpath = "/eos/user/g/gdelmont/bucket" and prefix = "obj/"
+//     objdir = "/eos/user/g/gdelmont/bucket/obj" and newprefix = ""
+//   - bucketpath = "/eos/user/g/gdelmont/bucket" and prefix = "nested/deep/obj"
+//     objdir = "/eos/user/g/gdelmont/bucket/nested/deep" and newprefix = "obj"
+func retrieveObjectDirectory(bucketPath, prefix string) (objdir, newprefix string) {
+	objrel, newprefix := filepath.Split(prefix)
+	return filepath.Join(bucketPath, objrel), newprefix
+}
 
-	bucket := *req.Bucket
-	prefix := *req.Prefix
-	p := filepath.Join(b.cfg.MountDir, bucket)
-	bucketDir := p
-
-	if strings.HasSuffix(prefix, "/") {
-		p = filepath.Join(p, prefix)
-		prefix = ""
+func (b *EosBackend) mdResponseToS3Object(bucketDir string, md *erpc.MDResponse) s3response.Object {
+	var path string
+	if md.Type == erpc.TYPE_CONTAINER {
+		path = string(md.Cmd.Path)
 	} else {
-		i := strings.LastIndexByte(prefix, '/')
-		if i >= 0 {
-			dir := prefix[:i]
-			prefix = prefix[i+1:]
-			p = filepath.Join(p, dir)
-		}
+		path = string(md.Fmd.Path)
 	}
 
-	fmt.Println("delimiter", *req.Delimiter, "prefix", *req.Prefix, "bucket", bucket)
-	fmt.Println("EOS path", p, "filter prefix", prefix)
+	key, _ := filepath.Rel(bucketDir, path)
 
-	// check if the bucket exists
-	_, err := b.stat(ctx, p, true)
+	var obj s3response.Object
+	if md.Type == erpc.TYPE_CONTAINER {
+		obj.Key = Ptr(key + "/")
+		obj.LastModified = Ptr(time.Unix(int64(md.Cmd.Mtime.Sec), int64(md.Cmd.Mtime.NSec)))
+		obj.Size = Ptr(int64(0))
+		obj.StorageClass = types.ObjectStorageClassStandard
+	} else {
+		// TODO: the etag for s3 is the md5 of the resource
+		obj.ETag = &md.Fmd.Etag
+		obj.StorageClass = types.ObjectStorageClassStandard
+		obj.LastModified = Ptr(time.Unix(int64(md.Fmd.Mtime.Sec), int64(md.Fmd.Mtime.NSec)))
+		obj.Key = &key
+		obj.Size = Ptr(int64(md.Fmd.Size))
+		obj.Owner = &types.Owner{
+			// TODO: check this
+			ID: Ptr(strconv.FormatUint(uint64(md.Fmd.Uid), 10)),
+		}
+	}
+	return obj
+}
+
+func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) (s3response.ListObjectsResult, error) {
+	name := *req.Bucket
+	prefix := *req.Prefix
+
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
 		return s3response.ListObjectsResult{}, err
 	}
 
-	// list the content
-	// TODO: consider the option passed, for now we list everything
-	// without any filtering, max entries, ...
+	objdir, fileprefix := retrieveObjectDirectory(bucket.Name, prefix)
 
-	findReq := &erpc.FindRequest{
-		Type: erpc.TYPE_LISTING,
-		Id: &erpc.MDId{
-			Path: []byte(p),
-		},
-		Role: &erpc.RoleId{
-			Uid: uint64(b.cfg.Uid),
-			Gid: uint64(b.cfg.Gid),
-		},
-		Authkey:  b.cfg.Authkey,
-		Maxdepth: 1,
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return s3response.ListObjectsResult{}, s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
 	}
 
-	if prefix != "" {
-		// we filter on server side in the find
-		findReq.Selection = &erpc.MDSelection{
-			Select:         true,
-			RegexpFilename: []byte("^" + prefix),
-			Symlink:        false,
+	var objects []s3response.Object
+	appendObjects := func(md *erpc.MDResponse) {
+		obj := b.mdResponseToS3Object(bucket.Path, md)
+		if isHiddenResource(*obj.Key) {
+			return
 		}
+		objects = append(objects, obj)
 	}
 
-	findRes, err := b.cl.Find(ctx, findReq)
-	if err != nil {
+	var filters eos.ListDirFilters
+	if fileprefix != "" {
+		filters.Prefix = &fileprefix
+	}
+
+	if err := b.eos.ListDir(ctx, auth, objdir, appendObjects, &filters); err != nil {
 		return s3response.ListObjectsResult{}, err
 	}
 
-	listRes := s3response.ListObjectsResult{
-		Name:        &bucket,
-		IsTruncated: Ptr(false),
-	}
-
-	i := 0
-	for {
-		r, err := findRes.Recv()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return s3response.ListObjectsResult{}, err
-		}
-		i++
-		if i == 1 {
-			// we skip the current directory in the list
-			continue
-		}
-
-		var path string
-		if r.Type == erpc.TYPE_CONTAINER {
-			path = string(r.Cmd.Path)
-		} else {
-			path = string(r.Fmd.Path)
-		}
-
-		if isHiddenResource(path) {
-			continue
-		}
-
-		key, _ := filepath.Rel(bucketDir, path)
-
-		var obj s3response.Object
-		if r.Type == erpc.TYPE_CONTAINER {
-			obj.Key = Ptr(key + "/")
-			obj.LastModified = Ptr(time.Unix(int64(r.Cmd.Mtime.Sec), int64(r.Cmd.Mtime.NSec)))
-			obj.Size = Ptr(int64(0))
-			obj.StorageClass = types.ObjectStorageClassStandard
-		} else {
-			// TODO: the etag for s3 is the md5 of the resource
-			obj.ETag = &r.Fmd.Etag
-			obj.StorageClass = types.ObjectStorageClassStandard
-			obj.LastModified = Ptr(time.Unix(int64(r.Fmd.Mtime.Sec), int64(r.Fmd.Mtime.NSec)))
-			obj.Key = &key
-			obj.Size = Ptr(int64(r.Fmd.Size))
-			obj.Owner = &types.Owner{
-				// TODO: check this
-				ID: Ptr(strconv.FormatUint(uint64(b.cfg.Uid), 10)),
-			}
-		}
-
-		listRes.Contents = append(listRes.Contents, obj)
-	}
-	listRes.Delimiter = req.Delimiter
-	listRes.Name = req.Bucket
-	listRes.Prefix = req.Prefix
-
-	return listRes, nil
+	return s3response.ListObjectsResult{
+		Name:      &name,
+		Prefix:    &prefix,
+		Delimiter: req.Delimiter,
+		Contents:  objects,
+	}, nil
 }
 
 func Ptr[T any](v T) *T {
@@ -678,33 +624,26 @@ func (b *EosBackend) ListObjectsV2(context.Context, *s3.ListObjectsV2Input) (s3r
 }
 
 func (b *EosBackend) DeleteObject(ctx context.Context, req *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
-	fmt.Println("DeleteObject func")
-	bucket := *req.Bucket
+	name := *req.Bucket
 	key := *req.Key
 
-	p := filepath.Join(b.cfg.MountDir, bucket, key)
-
-	// we have to check that this is an actual file on EOS
-	_, err := b.stat(ctx, p, false)
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
 		return nil, err
 	}
 
-	r := b.newNsRequest(ctx)
-	r.Command = &erpc.NSRequest_Rm{
-		Rm: &erpc.NSRequest_RmRequest{
-			Id: &erpc.MDId{
-				Path: []byte(p),
-			},
-		},
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
 	}
-	res, err := b.cl.Exec(ctx, r)
-	if err != nil {
-		return nil, err
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
 	}
 
-	if res.Error.Code != 0 {
-		return nil, fmt.Errorf("got error (%d): %s", res.Error.Code, res.Error.Msg)
+	objpath := filepath.Join(bucket.Path, key)
+	if err := b.eos.Remove(ctx, auth, objpath); err != nil {
+		return nil, err
 	}
 
 	return &s3.DeleteObjectOutput{}, nil

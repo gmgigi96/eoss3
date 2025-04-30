@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/gmgigi96/eoss3/eoss3"
-	"github.com/gmgigi96/eoss3/registry"
+	"github.com/gmgigi96/eoss3/meta"
 	"github.com/mitchellh/mapstructure"
 	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/plugins"
@@ -31,16 +31,16 @@ func (plugin) New(config string) (backend.Backend, error) {
 		return nil, err
 	}
 
-	regCfg, ok := m["registry"].(map[string]any)
+	regCfg, ok := m["buckets"].(map[string]any)
 	if !ok {
 		regCfg = make(map[string]any)
 	}
-	registry, err := registry.New(regCfg)
+	buckets, err := meta.New(regCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	be, err := eoss3.New(&cfg, registry)
+	be, err := eoss3.New(&cfg, buckets)
 	if err != nil {
 		return nil, err
 	}
