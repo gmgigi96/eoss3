@@ -1,90 +1,110 @@
 package meta
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 type InMemoryBucketStorer struct {
 	m       sync.RWMutex
-	buckets map[string]Bucket
-	users   map[int][]string // uid -> list of bucket name
+	buckets map[string]Bucket // name -> bucket
+	users   map[int][]string  // uid -> list of bucket name
+	paths   map[int]string    // map holding for each user (uid) their default bucket path
 }
 
-// func NewMemoryRegistry() (*MemoryRegistry, error) {
-// 	return &MemoryRegistry{
-// 		buckets: make(map[string]Mapping),
-// 		users:   make(map[int][]string),
-// 	}, nil
-// }
+func NewInMemoryBucketStorer() (*InMemoryBucketStorer, error) {
+	return &InMemoryBucketStorer{
+		buckets: make(map[string]Bucket),
+		users:   make(map[int][]string),
+	}, nil
+}
 
-// func (r *MemoryRegistry) CreateMapping(mapping Mapping) error {
-// 	r.m.RLock()
-// 	_, ok := r.buckets[mapping.Bucket]
-// 	r.m.RUnlock()
+func (s *InMemoryBucketStorer) CreateBucket(bucket Bucket) error {
+	s.m.RLock()
+	_, ok := s.buckets[bucket.Name]
+	s.m.RUnlock()
 
-// 	if ok {
-// 		return ErrMappingAlreadyExisting
-// 	}
+	if ok {
+		return ErrBucketAlreadyExisting
+	}
 
-// 	r.m.Lock()
-// 	r.buckets[mapping.Bucket] = mapping
-// 	r.m.Unlock()
+	s.m.Lock()
+	s.buckets[bucket.Name] = bucket
+	s.m.Unlock()
 
-// 	return nil
-// }
+	return nil
+}
 
-// func (r *MemoryRegistry) GetMapping(bucket string) (Mapping, error) {
-// 	r.m.RLock()
-// 	defer r.m.RUnlock()
+func (s *InMemoryBucketStorer) GetBucket(name string) (Bucket, error) {
+	s.m.RLock()
+	defer s.m.RUnlock()
 
-// 	m, ok := r.buckets[bucket]
-// 	if !ok {
-// 		return Mapping{}, ErrNoSuchBucket
-// 	}
-// 	return m, nil
-// }
+	m, ok := s.buckets[name]
+	if !ok {
+		return Bucket{}, ErrNoSuchBucket
+	}
+	return m, nil
+}
 
-// func (r *MemoryRegistry) DeleteMapping(bucket string) error {
-// 	r.m.Lock()
-// 	defer r.m.Unlock()
+func (s *InMemoryBucketStorer) DeleteBucket(name string) error {
+	s.m.Lock()
+	defer s.m.Unlock()
 
-// 	delete(r.buckets, bucket)
-// 	return nil
-// }
+	delete(s.buckets, name)
+	return nil
+}
 
-// func (r *MemoryRegistry) ListMappings() ([]Mapping, error) {
-// 	r.m.RLock()
-// 	defer r.m.RUnlock()
+func (s *InMemoryBucketStorer) ListBuckets() ([]Bucket, error) {
+	s.m.RLock()
+	defer s.m.RUnlock()
 
-// 	list := make([]Mapping, 0, len(r.buckets))
-// 	for _, m := range r.buckets {
-// 		list = append(list, m)
-// 	}
-// 	return list, nil
-// }
+	list := make([]Bucket, 0, len(s.buckets))
+	for _, m := range s.buckets {
+		list = append(list, m)
+	}
+	return list, nil
+}
 
-// func (r *MemoryRegistry) AssignBucket(bucket string, uid int) error {
-// 	r.m.Lock()
-// 	defer r.m.Unlock()
+func (s *InMemoryBucketStorer) AssignBucket(name string, uid int) error {
+	s.m.Lock()
+	defer s.m.Unlock()
 
-// 	r.users[uid] = append(r.users[uid], bucket)
-// 	return nil
-// }
+	s.users[uid] = append(s.users[uid], name)
+	return nil
+}
 
-// func (r *MemoryRegistry) ListBuckets(uid int) ([]string, error) {
-// 	r.m.RLock()
-// 	defer r.m.RUnlock()
+func (s *InMemoryBucketStorer) ListBucketsByUser(uid int) ([]string, error) {
+	s.m.RLock()
+	defer s.m.RUnlock()
 
-// 	buckets := r.users[uid]
-// 	list := make([]string, 0, len(buckets))
-// 	copy(list, buckets)
-// 	return list, nil
-// }
+	buckets := s.users[uid]
+	list := make([]string, 0, len(buckets))
+	copy(list, buckets)
+	return list, nil
+}
 
-// func (r *MemoryRegistry) UnassignBucket(bucket string, uid int) error {
-// 	r.m.Lock()
-// 	defer r.m.Unlock()
+func (s *InMemoryBucketStorer) UnassignBucket(name string, uid int) error {
+	s.m.Lock()
+	defer s.m.Unlock()
 
-// 	r.users[uid] = slices.DeleteFunc(r.users[uid], func(name string) bool {
-// 		return bucket == name
-// 	})
-// 	return nil
-// }
+	s.users[uid] = slices.DeleteFunc(s.users[uid], func(bucket string) bool {
+		return bucket == name
+	})
+
+	return nil
+}
+
+func (s *InMemoryBucketStorer) GetDefaultBucketPath(uid int) (string, error) {
+	s.m.RLock()
+	defer s.m.RUnlock()
+
+	return s.paths[uid], nil
+}
+
+func (s *InMemoryBucketStorer) StoreDefaultBucketPath(uid int, path string) error {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.paths[uid] = path
+	return nil
+}

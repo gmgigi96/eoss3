@@ -33,22 +33,20 @@ type BucketStorer interface {
 }
 
 var (
-	ErrMappingAlreadyExisting = errors.New("mapping already existing")
-	ErrNoSuchBucket           = errors.New("no such bucket")
+	ErrBucketAlreadyExisting = errors.New("bucket already existing")
+	ErrNoSuchBucket          = errors.New("no such bucket")
 )
 
 func New(c map[string]any) (BucketStorer, error) {
-	// driver, ok := c["driver"]
-	// if !ok {
-	// 	driver = "memory"
-	// }
+	driver, ok := c["driver"]
+	if !ok {
+		driver = "memory"
+	}
 
-	// switch driver {
-	// case "memory":
-	// 	return NewMemoryRegistry()
-	// case "local":
-	// 	return NewLocalRegistryFromConfig(c)
-	// }
+	switch driver {
+	case "memory":
+		return NewInMemoryBucketStorer()
+	}
 
 	return nil, errors.New("registry not found")
 }
