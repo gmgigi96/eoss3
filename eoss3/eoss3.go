@@ -216,6 +216,9 @@ func (b *EosBackend) CreateBucket(ctx context.Context, req *s3.CreateBucketInput
 	if err != nil {
 		return err
 	}
+	if defaultPath == "" {
+		return s3err.GetAPIError(s3err.ErrInvalidQueryParams)
+	}
 
 	bucketPath := filepath.Join(defaultPath, name)
 
