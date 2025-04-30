@@ -344,9 +344,9 @@ func (b *EosBackend) CreateMultipartUpload(context.Context, s3response.CreateMul
 	return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
+func (b *EosBackend) CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput) (_ s3response.CompleteMultipartUploadResult, versionid string, _ error) {
 	fmt.Println("CompleteMultipartUpload func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	return s3response.CompleteMultipartUploadResult{}, "", s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
 func (b *EosBackend) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput) error {
