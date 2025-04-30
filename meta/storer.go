@@ -46,6 +46,8 @@ func New(c map[string]any) (BucketStorer, error) {
 	switch driver {
 	case "memory":
 		return NewInMemoryBucketStorer()
+	case "local":
+		return NewLocalBucketStorerFromConfig(c)
 	}
 
 	return nil, errors.New("registry not found")
