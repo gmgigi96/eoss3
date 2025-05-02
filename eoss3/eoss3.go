@@ -127,6 +127,7 @@ func getLoggedAccount(ctx context.Context) (auth.Account, bool) {
 
 func (b *EosBackend) ListBuckets(ctx context.Context, input s3response.ListBucketsInput) (s3response.ListAllMyBucketsResult, error) {
 	fmt.Println("ListBuckets")
+	fmt.Println(input.IsAdmin)
 
 	var buckets []s3response.ListAllMyBucketsEntry
 	var ctoken string

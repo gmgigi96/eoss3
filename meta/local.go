@@ -119,6 +119,7 @@ func (s *LocalBucketStorer) ListBuckets() ([]Bucket, error) {
 		if err := json.Unmarshal(data, &bucket); err != nil {
 			return nil, err
 		}
+		buckets = append(buckets, bucket)
 	}
 	return buckets, nil
 }
