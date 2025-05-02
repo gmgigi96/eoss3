@@ -9,13 +9,13 @@ import (
 // with the real path on EOS.
 type Bucket struct {
 	// Name is the name of the bucket.
-	Name string
+	Name string `json:"name"`
 	// Path is the real path on EOS.
-	Path string
+	Path string `json:"path"`
 	// CreatedAt is the creation time of the bucket.
 	// Might be different from the actualt ctime of
 	// the corresponding folder in EOS.
-	CreatedAt time.Time
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type BucketStorer interface {
