@@ -126,6 +126,8 @@ func getLoggedAccount(ctx context.Context) (auth.Account, bool) {
 }
 
 func (b *EosBackend) ListBuckets(ctx context.Context, input s3response.ListBucketsInput) (s3response.ListAllMyBucketsResult, error) {
+	fmt.Println("ListBuckets")
+
 	var buckets []s3response.ListAllMyBucketsEntry
 	var ctoken string
 	if input.IsAdmin {
@@ -201,6 +203,8 @@ func (b *EosBackend) GetBucketAcl(ctx context.Context, req *s3.GetBucketAclInput
 }
 
 func (b *EosBackend) CreateBucket(ctx context.Context, req *s3.CreateBucketInput, acl []byte) error {
+	fmt.Println("CreateBucket")
+
 	name := *req.Bucket
 
 	if _, err := b.meta.GetBucket(name); err == nil {
@@ -248,6 +252,8 @@ func (b *EosBackend) PutBucketAcl(_ context.Context, name string, data []byte) e
 }
 
 func (b *EosBackend) DeleteBucket(ctx context.Context, name string) error {
+	fmt.Println("DeleteBucket")
+
 	acct, ok := getLoggedAccount(ctx)
 	if !ok {
 		return s3err.GetAPIError(s3err.ErrAccessDenied)
@@ -301,7 +307,25 @@ func (b *EosBackend) PutBucketPolicy(_ context.Context, bucket string, policy []
 
 func (b *EosBackend) GetBucketPolicy(_ context.Context, bucket string) ([]byte, error) {
 	fmt.Println("GetBucketPolicy func")
-	return []byte("{}"), nil
+
+	mocked := fmt.Sprintf(`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAllActionsToMyUser",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "myuser"
+      },
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::%s",
+        "arn:aws:s3:::%s/*"
+      ]
+    }
+  ]
+}`, bucket, bucket)
+	return []byte(mocked), nil
 }
 
 func (b *EosBackend) DeleteBucketPolicy(_ context.Context, bucket string) error {
@@ -429,6 +453,8 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 }
 
 func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
+	fmt.Println("HeadObject")
+
 	name := *req.Bucket
 	key := *req.Key
 
@@ -465,6 +491,8 @@ func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*
 }
 
 func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+	fmt.Println("GetObject")
+
 	name := *req.Bucket
 	key := *req.Key
 
@@ -572,6 +600,8 @@ func (b *EosBackend) mdResponseToS3Object(bucketDir string, md *erpc.MDResponse)
 }
 
 func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) (s3response.ListObjectsResult, error) {
+	fmt.Println("ListObjects")
+
 	name := *req.Bucket
 	prefix := *req.Prefix
 
@@ -580,7 +610,7 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 		return s3response.ListObjectsResult{}, err
 	}
 
-	objdir, fileprefix := retrieveObjectDirectory(bucket.Name, prefix)
+	objdir, fileprefix := retrieveObjectDirectory(bucket.Path, prefix)
 
 	acct, ok := getLoggedAccount(ctx)
 	if !ok {
@@ -627,6 +657,8 @@ func (b *EosBackend) ListObjectsV2(context.Context, *s3.ListObjectsV2Input) (s3r
 }
 
 func (b *EosBackend) DeleteObject(ctx context.Context, req *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+	fmt.Println("DeleteObject")
+
 	name := *req.Bucket
 	key := *req.Key
 
