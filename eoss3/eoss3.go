@@ -301,7 +301,7 @@ func (b *EosBackend) PutBucketPolicy(_ context.Context, bucket string, policy []
 
 func (b *EosBackend) GetBucketPolicy(_ context.Context, bucket string) ([]byte, error) {
 	fmt.Println("GetBucketPolicy func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
+	return []byte("{}"), nil
 }
 
 func (b *EosBackend) DeleteBucketPolicy(_ context.Context, bucket string) error {

@@ -20,6 +20,7 @@ func (plugin) New(config string) (backend.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 
 	var m map[string]any
 	if err := yaml.NewDecoder(f).Decode(&m); err != nil {

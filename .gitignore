@@ -8,6 +8,7 @@
 *.so
 *.dylib
 eoss3.so
+eoss3-cli
 
 # Test binary, built with `go test -c`
 *.test
