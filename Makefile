@@ -9,7 +9,7 @@ build: $(PLUGIN)
 
 .PHONY: $(PLUGIN)
 $(PLUGIN):
-	$(GOBUILD) -buildmode=plugin -o $(PLUGIN) plugin.go
+	$(GOBUILD) -buildmode=plugin -gcflags="all=-N -l" -o $(PLUGIN) plugin.go
 	$(GOBUILD) -o eoss3-cli cli/main.go
 
 .PHONY: clean

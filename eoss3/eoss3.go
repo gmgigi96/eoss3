@@ -178,27 +178,6 @@ func (b *EosBackend) GetBucketAcl(ctx context.Context, req *s3.GetBucketAclInput
 	fmt.Println("GetBucketAcl func")
 
 	// The result is a json of the struct auth.ACL
-
-	// r := b.newNsRequest(ctx)
-	// path := path.Join(b.cfg.MountDir, *req.Bucket)
-
-	// r.Command = &erpc.NSRequest_Acl{
-	// 	Acl: &erpc.NSRequest_AclRequest{
-	// 		Id: &erpc.MDId{
-	// 			Path: []byte(path),
-	// 		},
-	// 		Cmd:  erpc.NSRequest_AclRequest_LIST,
-	// 		Type: erpc.NSRequest_AclRequest_SYS_ACL,
-	// 	},
-	// }
-
-	// res, err := b.cl.Exec(ctx, r)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// res.Acl.
-
 	return nil, nil
 }
 
@@ -305,27 +284,48 @@ func (b *EosBackend) PutBucketPolicy(_ context.Context, bucket string, policy []
 	return s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
-func (b *EosBackend) GetBucketPolicy(_ context.Context, bucket string) ([]byte, error) {
+func generateBucketPolicy(sid, username, effect, bucket string) string {
+	s := fmt.Sprintf(
+		`{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "%s",
+            "Effect": "%s",
+            "Principal": {
+                "AWS": "%s"
+            },
+            "Action": "s3:*",
+            "Resource": [
+                "arn:aws:s3:::%s",
+                "arn:aws:s3:::%s/*"
+            ]
+        }
+    ]
+}`, sid, effect, username, bucket, bucket)
+	return s
+}
+
+func (b *EosBackend) GetBucketPolicy(ctx context.Context, bucket string) ([]byte, error) {
 	fmt.Println("GetBucketPolicy func")
 
-	mocked := fmt.Sprintf(`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowAllActionsToMyUser",
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "myuser"
-      },
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::%s",
-        "arn:aws:s3:::%s/*"
-      ]
-    }
-  ]
-}`, bucket, bucket)
-	return []byte(mocked), nil
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+
+	var policy string
+	if b.meta.IsAssigned(bucket, acct.UserID) {
+		policy = generateBucketPolicy("AllowAllActionsToUser", auth.Username(), "Allow", bucket)
+	} else {
+		policy = generateBucketPolicy("DenyAllActionsToUser", auth.Username(), "Deny", bucket)
+	}
+	return []byte(policy), nil
 }
 
 func (b *EosBackend) DeleteBucketPolicy(_ context.Context, bucket string) error {

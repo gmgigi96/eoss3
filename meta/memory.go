@@ -73,6 +73,14 @@ func (s *InMemoryBucketStorer) AssignBucket(name string, uid int) error {
 	return nil
 }
 
+func (s *InMemoryBucketStorer) IsAssigned(name string, uid int) bool {
+	s.m.RLock()
+	defer s.m.RUnlock()
+
+	buckets := s.users[uid]
+	return slices.Contains(buckets, name)
+}
+
 func (s *InMemoryBucketStorer) ListBucketsByUser(uid int) ([]string, error) {
 	s.m.RLock()
 	defer s.m.RUnlock()

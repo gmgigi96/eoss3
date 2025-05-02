@@ -30,7 +30,7 @@ type Auth struct {
 func (a *Auth) Username() string {
 	u, err := user.LookupId(strconv.FormatUint(a.Uid, 10))
 	if err != nil {
-		return ""
+		return "<unknown>"
 	}
 	return u.Username
 }

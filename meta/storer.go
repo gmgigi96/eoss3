@@ -25,6 +25,7 @@ type BucketStorer interface {
 	ListBuckets() ([]Bucket, error)
 
 	AssignBucket(name string, uid int) error
+	IsAssigned(name string, uid int) bool
 	ListBucketsByUser(uid int) ([]string, error)
 	UnassignBucket(name string, uid int) error
 

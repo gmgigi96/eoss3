@@ -138,6 +138,13 @@ func (s *LocalBucketStorer) AssignBucket(name string, uid int) error {
 	return nil
 }
 
+func (s *LocalBucketStorer) IsAssigned(name string, uid int) bool {
+	userpath := s.userFolder(uid)
+
+	_, err := os.Stat(filepath.Join(userpath, name))
+	return !os.IsNotExist(err)
+}
+
 func (s *LocalBucketStorer) ListBucketsByUser(uid int) ([]string, error) {
 	userpath := s.userFolder(uid)
 
