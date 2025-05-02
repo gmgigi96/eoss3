@@ -3,8 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/user"
+	"strconv"
 	"time"
 
+	"github.com/gmgigi96/eoss3/eos"
 	"github.com/gmgigi96/eoss3/meta"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
@@ -24,7 +27,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&globalFlags.Config, "config", "c", "/etc/eoss3.yaml", "Path of the config file to use")
 
 	rootCmd.AddCommand(createBucketCmd)
-	createBucketCmd.Flags().IntVarP(&createBucketFlags.Owner, "owner", "o", 0, "User id of the owner of the bucket")
+	createBucketCmd.Flags().StringVarP(&createBucketFlags.Owner, "owner", "o", "", "User id of the owner of the bucket")
 	createBucketCmd.Flags().StringVarP(&createBucketFlags.Name, "name", "n", "", "Name of the new bucket")
 	createBucketCmd.Flags().StringVarP(&createBucketFlags.Path, "path", "p", "", "Path on EOS where the bucket is located")
 
@@ -39,6 +42,9 @@ type Config struct {
 	Buckets    map[string]any `mapstructure:"buckets"`
 	RootAccess string         `mapstructure:"root_access"`
 	RootSecret string         `mapstructure:"root_secret"`
+	GrpcURL    string         `mapstructure:"grpc_url"`
+	HttpURL    string         `mapstructure:"http_url"`
+	AuthKey    string         `mapstructure:"authkey"`
 }
 
 func Execute() {
@@ -49,7 +55,7 @@ func Execute() {
 }
 
 var createBucketFlags = struct {
-	Owner int    // User id of the owner of the bucket
+	Owner string // Username owner of the bucket
 	Name  string // Name of the bucket
 	Path  string // Path on EOS where the bucket is located
 }{}
@@ -84,6 +90,16 @@ var createBucketCmd = &cobra.Command{
 		buckets, err := meta.New(cfg.Buckets)
 		cobra.CheckErr(err)
 
+		client, err := eos.NewClient(eos.Config{
+			GrpcURL: cfg.GrpcURL,
+			HttpURL: cfg.HttpURL,
+			AuthKey: cfg.AuthKey,
+		})
+		cobra.CheckErr(err)
+
+		owner, err := user.Lookup(createBucketFlags.Owner)
+		cobra.CheckErr(err)
+
 		bucket := meta.Bucket{
 			Name:      createBucketFlags.Name,
 			Path:      createBucketFlags.Path,
@@ -92,7 +108,20 @@ var createBucketCmd = &cobra.Command{
 		err = buckets.CreateBucket(bucket)
 		cobra.CheckErr(err)
 
-		err = buckets.AssignBucket(createBucketFlags.Name, createBucketFlags.Owner)
+		uid, err := strconv.ParseUint(owner.Uid, 10, 64)
+		cobra.CheckErr(err)
+
+		gid, err := strconv.ParseUint(owner.Gid, 10, 64)
+		cobra.CheckErr(err)
+
+		err = buckets.AssignBucket(createBucketFlags.Name, int(uid))
+		cobra.CheckErr(err)
+
+		auth := eos.Auth{
+			Uid: uid,
+			Gid: gid,
+		}
+		err = client.Mkdir(cmd.Context(), auth, bucket.Path, 0755)
 		cobra.CheckErr(err)
 	},
 }
