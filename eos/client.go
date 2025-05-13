@@ -213,7 +213,7 @@ func (c *Client) Mkdir(ctx context.Context, auth Auth, path string, mode int64) 
 func (c *Client) initNsRequest(auth Auth) *erpc.NSRequest {
 	return &erpc.NSRequest{
 		Role: &erpc.RoleId{
-			Uid: auth.Gid,
+			Uid: auth.Uid,
 			Gid: auth.Gid,
 		},
 		Authkey: c.authKey,
