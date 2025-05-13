@@ -80,48 +80,76 @@ func getConfig() (*Config, error) {
 	return &cfg, nil
 }
 
+func getUidGid(user *user.User) (uint64, uint64, error) {
+	uid, err := strconv.ParseUint(user.Uid, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	gid, err := strconv.ParseUint(user.Gid, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return uid, gid, nil
+}
+
 var createBucketCmd = &cobra.Command{
 	Use:   "create-bucket",
 	Short: "Create an S3 bucket",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := getConfig()
-		cobra.CheckErr(err)
+		if err != nil {
+			return err
+		}
 
 		buckets, err := meta.New(cfg.Buckets)
-		cobra.CheckErr(err)
+		if err != nil {
+			return err
+		}
 
 		client, err := eos.NewClient(eos.Config{
 			GrpcURL: cfg.GrpcURL,
 			HttpURL: cfg.HttpURL,
 			AuthKey: cfg.AuthKey,
 		})
-		cobra.CheckErr(err)
+		if err != nil {
+			return err
+		}
 
 		owner, err := user.Lookup(createBucketFlags.Owner)
-		cobra.CheckErr(err)
+		if err != nil {
+			return err
+		}
+
+		uid, gid, err := getUidGid(owner)
+		if err != nil {
+			return err
+		}
 
 		bucket := meta.Bucket{
 			Name:      createBucketFlags.Name,
 			Path:      createBucketFlags.Path,
 			CreatedAt: time.Now(),
 		}
-		err = buckets.CreateBucket(bucket)
-		cobra.CheckErr(err)
+		if err := buckets.CreateBucket(bucket); err != nil {
+			return err
+		}
 
-		uid, err := strconv.ParseUint(owner.Uid, 10, 64)
-		cobra.CheckErr(err)
-
-		gid, err := strconv.ParseUint(owner.Gid, 10, 64)
-		cobra.CheckErr(err)
-
-		err = buckets.AssignBucket(createBucketFlags.Name, int(uid))
-		cobra.CheckErr(err)
+		if err := buckets.AssignBucket(createBucketFlags.Name, int(uid)); err != nil {
+			_ = buckets.DeleteBucket(bucket.Name)
+			return err
+		}
 
 		auth := eos.Auth{
 			Uid: uid,
 			Gid: gid,
 		}
-		err = client.Mkdir(cmd.Context(), auth, bucket.Path, 0755)
-		cobra.CheckErr(err)
+		if err := client.Mkdir(cmd.Context(), auth, bucket.Path, 0755); err != nil {
+			_ = buckets.UnassignBucket(bucket.Name, int(uid))
+			_ = buckets.DeleteBucket(bucket.Name)
+			return err
+		}
+		return nil
 	},
 }
