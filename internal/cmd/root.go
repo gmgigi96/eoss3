@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gmgigi96/eoss3/eos"
@@ -35,6 +36,9 @@ func init() {
 	createBucketCmd.MarkFlagRequired("owner")
 	createBucketCmd.MarkFlagRequired("name")
 	createBucketCmd.MarkFlagRequired("path")
+
+	rootCmd.AddCommand(setDefaultPathCmd)
+	rootCmd.AddCommand(getDefaultPathCmd)
 }
 
 type Config struct {
@@ -61,7 +65,6 @@ var createBucketFlags = struct {
 }{}
 
 func getConfig() (*Config, error) {
-	fmt.Println(globalFlags.Config)
 	f, err := os.Open(globalFlags.Config)
 	if err != nil {
 		return nil, err
@@ -150,6 +153,94 @@ var createBucketCmd = &cobra.Command{
 			_ = buckets.DeleteBucket(bucket.Name)
 			return err
 		}
+		return nil
+	},
+}
+
+var setDefaultPathCmd = &cobra.Command{
+	Use:     "set-default-path <user> <path>",
+	PreRunE: cobra.ExactArgs(2),
+	Short:   "Set the default EOS path where to create the buckets",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := getConfig()
+		if err != nil {
+			return err
+		}
+
+		username := strings.TrimSpace(args[0])
+		path := strings.TrimSpace(args[1])
+
+		buckets, err := meta.New(cfg.Buckets)
+		if err != nil {
+			return err
+		}
+
+		client, err := eos.NewClient(eos.Config{
+			GrpcURL: cfg.GrpcURL,
+			HttpURL: cfg.HttpURL,
+			AuthKey: cfg.AuthKey,
+		})
+		if err != nil {
+			return err
+		}
+
+		// check that the path on EOS exists
+		owner, err := user.Lookup(username)
+		if err != nil {
+			return err
+		}
+
+		uid, gid, err := getUidGid(owner)
+		if err != nil {
+			return err
+		}
+
+		auth := eos.Auth{
+			Uid: uid,
+			Gid: gid,
+		}
+		if _, err := client.Stat(cmd.Context(), auth, path); err != nil {
+			return err
+		}
+
+		return buckets.StoreDefaultBucketPath(int(uid), path)
+	},
+}
+
+var getDefaultPathCmd = &cobra.Command{
+	Use:     "get-default-path <user>",
+	PreRunE: cobra.ExactArgs(1),
+	Short:   "Get the default EOS path where to create the buckets for the user",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := getConfig()
+		if err != nil {
+			return err
+		}
+
+		username := strings.TrimSpace(args[0])
+
+		// check that the path on EOS exists
+		owner, err := user.Lookup(username)
+		if err != nil {
+			return err
+		}
+
+		uid, _, err := getUidGid(owner)
+		if err != nil {
+			return err
+		}
+
+		buckets, err := meta.New(cfg.Buckets)
+		if err != nil {
+			return err
+		}
+
+		path, err := buckets.GetDefaultBucketPath(int(uid))
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(path)
 		return nil
 	},
 }

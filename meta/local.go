@@ -216,5 +216,6 @@ func (s *LocalBucketStorer) StoreDefaultBucketPath(uid int, path string) error {
 	if err != nil {
 		return err
 	}
+	meta.DefaultBucketPath = path
 	return s.storeUserMetadata(uid, meta)
 }
