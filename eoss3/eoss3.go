@@ -21,6 +21,7 @@ import (
 	"github.com/gmgigi96/eoss3/eos"
 	"github.com/gmgigi96/eoss3/meta"
 	"github.com/versity/versitygw/auth"
+	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3response"
 	"github.com/versity/versitygw/s3select"
@@ -61,6 +62,7 @@ type EosBackend struct {
 
 	eos  *eos.Client
 	meta meta.BucketStorer
+	backend.BackendUnsupported
 }
 
 func New(cfg *Config, meta meta.BucketStorer) (*EosBackend, error) {
@@ -170,11 +172,6 @@ func (b *EosBackend) ListBuckets(ctx context.Context, input s3response.ListBucke
 	}, nil
 }
 
-func (b *EosBackend) HeadBucket(context.Context, *s3.HeadBucketInput) (*s3.HeadBucketOutput, error) {
-	fmt.Println("HeadBucket func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
 func (b *EosBackend) GetBucketAcl(ctx context.Context, req *s3.GetBucketAclInput) ([]byte, error) {
 	fmt.Println("GetBucketAcl func")
 
@@ -226,11 +223,6 @@ func (b *EosBackend) CreateBucket(ctx context.Context, req *s3.CreateBucketInput
 	return nil
 }
 
-func (b *EosBackend) PutBucketAcl(_ context.Context, name string, data []byte) error {
-	fmt.Println("PutBucketAcl func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
 func (b *EosBackend) DeleteBucket(ctx context.Context, name string) error {
 	fmt.Println("DeleteBucket")
 
@@ -268,21 +260,6 @@ func (b *EosBackend) DeleteBucket(ctx context.Context, name string) error {
 	}
 
 	return b.meta.DeleteBucket(name)
-}
-
-func (b *EosBackend) PutBucketVersioning(_ context.Context, bucket string, status types.BucketVersioningStatus) error {
-	fmt.Println("PutBucketVersioning func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetBucketVersioning(_ context.Context, bucket string) (s3response.GetBucketVersioningOutput, error) {
-	fmt.Println("GetBucketVersioning func")
-	return s3response.GetBucketVersioningOutput{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) PutBucketPolicy(_ context.Context, bucket string, policy []byte) error {
-	fmt.Println("PutBucketPolicy func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
 func generateBucketPolicy(sid, username, effect, bucket string) string {
@@ -327,76 +304,6 @@ func (b *EosBackend) GetBucketPolicy(ctx context.Context, bucket string) ([]byte
 		policy = generateBucketPolicy("DenyAllActionsToUser", auth.Username(), "Deny", bucket)
 	}
 	return []byte(policy), nil
-}
-
-func (b *EosBackend) DeleteBucketPolicy(_ context.Context, bucket string) error {
-	fmt.Println("DeleteBucketPolicy func")
-	return nil
-}
-
-func (b *EosBackend) PutBucketOwnershipControls(_ context.Context, bucket string, ownership types.ObjectOwnership) error {
-	fmt.Println("PutBucketOwnershipControls func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetBucketOwnershipControls(_ context.Context, bucket string) (types.ObjectOwnership, error) {
-	fmt.Println("GetBucketOwnershipControls func")
-	return types.ObjectOwnershipBucketOwnerEnforced, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) DeleteBucketOwnershipControls(_ context.Context, bucket string) error {
-	fmt.Println("DeleteBucketOwnershipControls func")
-	return nil
-}
-
-func (b *EosBackend) PutBucketCors(context.Context, []byte) error {
-	fmt.Println("PutBucketCors func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetBucketCors(_ context.Context, bucket string) ([]byte, error) {
-	fmt.Println("GetBucketCors func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) DeleteBucketCors(_ context.Context, bucket string) error {
-	fmt.Println("DeleteBucketCors func")
-	return nil
-}
-
-func (b *EosBackend) CreateMultipartUpload(context.Context, s3response.CreateMultipartUploadInput) (s3response.InitiateMultipartUploadResult, error) {
-	fmt.Println("CreateMultipartUpload func")
-	return s3response.InitiateMultipartUploadResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput) (_ s3response.CompleteMultipartUploadResult, versionid string, _ error) {
-	fmt.Println("CompleteMultipartUpload func")
-	return s3response.CompleteMultipartUploadResult{}, "", s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput) error {
-	fmt.Println("AbortMultipartUpload func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) ListMultipartUploads(context.Context, *s3.ListMultipartUploadsInput) (s3response.ListMultipartUploadsResult, error) {
-	fmt.Println("ListMultipartUploads func")
-	return s3response.ListMultipartUploadsResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) ListParts(context.Context, *s3.ListPartsInput) (s3response.ListPartsResult, error) {
-	fmt.Println("ListParts func")
-	return s3response.ListPartsResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) UploadPart(context.Context, *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
-	fmt.Println("UploadPart func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) UploadPartCopy(context.Context, *s3.UploadPartCopyInput) (s3response.CopyPartResult, error) {
-	fmt.Println("UploadPartCopy func")
-	return s3response.CopyPartResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
 
 func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput) (s3response.PutObjectOutput, error) {
@@ -538,21 +445,6 @@ func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3
 	}, nil
 }
 
-func (b *EosBackend) GetObjectAcl(context.Context, *s3.GetObjectAclInput) (*s3.GetObjectAclOutput, error) {
-	fmt.Println("GetObjectAcl func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetObjectAttributes(context.Context, *s3.GetObjectAttributesInput) (s3response.GetObjectAttributesResponse, error) {
-	fmt.Println("GetObjectAttributes func")
-	return s3response.GetObjectAttributesResponse{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) CopyObject(context.Context, s3response.CopyObjectInput) (*s3.CopyObjectOutput, error) {
-	fmt.Println("CopyObject func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
 // gets the deepest directory by concatenating the bucket path with the prefix, considering
 // that the last part of the prefix (after the last /), can be used to filter resources with
 // a prefix inside a directory. The new returned prefix will then contain in this case
@@ -652,11 +544,6 @@ func Ptr[T any](v T) *T {
 	return &v
 }
 
-func (b *EosBackend) ListObjectsV2(context.Context, *s3.ListObjectsV2Input) (s3response.ListObjectsV2Result, error) {
-	fmt.Println("ListObjectsV2 func")
-	return s3response.ListObjectsV2Result{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
 func (b *EosBackend) DeleteObject(ctx context.Context, req *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
 	fmt.Println("DeleteObject")
 
@@ -685,21 +572,6 @@ func (b *EosBackend) DeleteObject(ctx context.Context, req *s3.DeleteObjectInput
 	return &s3.DeleteObjectOutput{}, nil
 }
 
-func (b *EosBackend) DeleteObjects(context.Context, *s3.DeleteObjectsInput) (s3response.DeleteResult, error) {
-	fmt.Println("DeleteObjects func")
-	return s3response.DeleteResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) PutObjectAcl(context.Context, *s3.PutObjectAclInput) error {
-	fmt.Println("PutObjectAcl func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) RestoreObject(context.Context, *s3.RestoreObjectInput) error {
-	fmt.Println("RestoreObject func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
 func (b *EosBackend) SelectObjectContent(ctx context.Context, input *s3.SelectObjectContentInput) func(w *bufio.Writer) {
 	return func(w *bufio.Writer) {
 		var getProgress s3select.GetProgress
@@ -713,79 +585,4 @@ func (b *EosBackend) SelectObjectContent(ctx context.Context, input *s3.SelectOb
 		apiErr := s3err.GetAPIError(s3err.ErrNotImplemented)
 		mh.FinishWithError(apiErr.Code, apiErr.Description)
 	}
-}
-
-func (b *EosBackend) ListObjectVersions(context.Context, *s3.ListObjectVersionsInput) (s3response.ListVersionsResult, error) {
-	fmt.Println("ListObjectVersions func")
-	return s3response.ListVersionsResult{}, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetBucketTagging(_ context.Context, bucket string) (map[string]string, error) {
-	fmt.Println("GetBucketTagging func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) PutBucketTagging(_ context.Context, bucket string, tags map[string]string) error {
-	fmt.Println("PutBucketTagging func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) DeleteBucketTagging(_ context.Context, bucket string) error {
-	fmt.Println("DeleteBucketTagging func")
-	return nil
-}
-
-func (b *EosBackend) GetObjectTagging(_ context.Context, bucket, object string) (map[string]string, error) {
-	fmt.Println("GetObjectTagging func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) PutObjectTagging(_ context.Context, bucket, object string, tags map[string]string) error {
-	fmt.Println("PutObjectTagging func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) DeleteObjectTagging(_ context.Context, bucket, object string) error {
-	fmt.Println("DeleteObjectTagging func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) PutObjectLockConfiguration(_ context.Context, bucket string, config []byte) error {
-	fmt.Println("PutObjectLockConfiguration func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetObjectLockConfiguration(_ context.Context, bucket string) ([]byte, error) {
-	fmt.Println("GetObjectLockConfiguration func")
-	return []byte("{}"), nil // TODO
-}
-
-func (b *EosBackend) PutObjectRetention(_ context.Context, bucket, object, versionId string, bypass bool, retention []byte) error {
-	fmt.Println("PutObjectRetention func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetObjectRetention(_ context.Context, bucket, object, versionId string) ([]byte, error) {
-	fmt.Println("GetObjectRetention func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) PutObjectLegalHold(_ context.Context, bucket, object, versionId string, status bool) error {
-	fmt.Println("PutObjectLegalHold func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) GetObjectLegalHold(_ context.Context, bucket, object, versionId string) (*bool, error) {
-	fmt.Println("GetObjectLegalHold func")
-	return nil, s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) ChangeBucketOwner(_ context.Context, bucket string, acl []byte) error {
-	fmt.Println("ChangeBucketOwner func")
-	return s3err.GetAPIError(s3err.ErrNotImplemented)
-}
-
-func (b *EosBackend) ListBucketsAndOwners(context.Context) ([]s3response.Bucket, error) {
-	fmt.Println("ListBucketsAndOwners func")
-	return []s3response.Bucket{}, s3err.GetAPIError(s3err.ErrNotImplemented)
 }
