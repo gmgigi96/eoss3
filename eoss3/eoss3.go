@@ -21,7 +21,6 @@ import (
 	"github.com/gmgigi96/eoss3/eos"
 	"github.com/gmgigi96/eoss3/meta"
 	"github.com/versity/versitygw/auth"
-	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3response"
 	"github.com/versity/versitygw/s3select"
@@ -62,7 +61,7 @@ type EosBackend struct {
 
 	eos  *eos.Client
 	meta meta.BucketStorer
-	backend.BackendUnsupported
+	BackendUnsupported
 }
 
 func New(cfg *Config, meta meta.BucketStorer) (*EosBackend, error) {
@@ -585,4 +584,9 @@ func (b *EosBackend) SelectObjectContent(ctx context.Context, input *s3.SelectOb
 		apiErr := s3err.GetAPIError(s3err.ErrNotImplemented)
 		mh.FinishWithError(apiErr.Code, apiErr.Description)
 	}
+}
+
+func (b *EosBackend) GetObjectLockConfiguration(_ context.Context, bucket string) ([]byte, error) {
+	fmt.Println("GetObjectLockConfiguration")
+	return []byte("{}"), nil
 }
