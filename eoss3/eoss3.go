@@ -539,6 +539,25 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 	}, nil
 }
 
+func (b *EosBackend) ListObjectsV2(ctx context.Context, req *s3.ListObjectsV2Input) (s3response.ListObjectsV2Result, error) {
+	fmt.Println("ListObjectsV2")
+
+	res, err := b.ListObjects(ctx, &s3.ListObjectsInput{
+		Bucket: req.Bucket,
+		Prefix: req.Prefix,
+	})
+	if err != nil {
+		return s3response.ListObjectsV2Result{}, err
+	}
+
+	return s3response.ListObjectsV2Result{
+		Name:      res.Name,
+		Prefix:    res.Prefix,
+		Delimiter: res.Delimiter,
+		Contents:  res.Contents,
+	}, nil
+}
+
 func Ptr[T any](v T) *T {
 	return &v
 }
