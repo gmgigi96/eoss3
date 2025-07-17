@@ -128,6 +128,7 @@ func (c *Client) Stat(ctx context.Context, auth Auth, path string) (*erpc.MDResp
 
 	r, err := res.Recv()
 	if err != nil {
+		fmt.Println(err)
 		return nil, ErrNoSuchResource{Path: path}
 	}
 	return r, nil
@@ -242,13 +243,14 @@ func (c *Client) Rmdir(ctx context.Context, auth Auth, path string) error {
 	return nil
 }
 
-func (c *Client) Remove(ctx context.Context, auth Auth, path string) error {
+func (c *Client) Remove(ctx context.Context, auth Auth, path string, recursive bool) error {
 	req := c.initNsRequest(auth)
 	req.Command = &erpc.NSRequest_Rm{
 		Rm: &erpc.NSRequest_RmRequest{
 			Id: &erpc.MDId{
 				Path: []byte(path),
 			},
+			Recursive: recursive,
 		},
 	}
 	res, err := c.grpcClient.Exec(ctx, req)

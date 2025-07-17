@@ -583,7 +583,7 @@ func (b *EosBackend) DeleteObject(ctx context.Context, req *s3.DeleteObjectInput
 	}
 
 	objpath := filepath.Join(bucket.Path, key)
-	if err := b.eos.Remove(ctx, auth, objpath); err != nil {
+	if err := b.eos.Remove(ctx, auth, objpath, false); err != nil {
 		return nil, err
 	}
 
