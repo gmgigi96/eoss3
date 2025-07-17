@@ -13,20 +13,23 @@
 
 # --- Helper Functions ---
 function usage() {
-    echo "Usage: $0 -e <S3_ENDPOINT_URL> -a <S3_ACCESS_KEY_ID> -s <S3_SECRET_ACCESS_KEY>"
+    echo "Usage: $0 -e <S3_ENDPOINT_URL> -a <S3_ACCESS_KEY_ID> -s <S3_SECRET_ACCESS_KEY> -b <BUCKET>"
     echo ""
     echo "Options:"
-    echo "  -e, --endpoint   S3 endpoint URL (e.g., 'https://s3.your-provider.com')"
+    echo "  -e, --endpoint   S3 endpoint URL (e.g., 'http://127.0.0.1:7070')"
     echo "  -a, --access-key S3 access key ID"
     echo "  -s, --secret-key S3 secret access key"
-    echo "  -h, --help         Display this help and exit"
+    echo "  -b, --bucket     Bucket name"
+    echo "  -h, --help       Display this help and exit"
     exit 1
 }
 
+header_count=0
 function print_header() {
     echo "======================================================================"
-    echo "=> $1"
+    echo "=> ${header_count}. $1"
     echo "======================================================================"
+    ((header_count++))
 }
 
 function print_success() {
@@ -86,6 +89,10 @@ while [[ "$#" -gt 0 ]]; do
         S3_SECRET_ACCESS_KEY="$2"
         shift
         ;;
+    -b | --bucket)
+        BUCKET_NAME="$2"
+        shift
+        ;;
     -h | --help) usage ;;
     *)
         echo "Unknown parameter passed: $1"
@@ -96,7 +103,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Check if all required options are provided
-if [ -z "${S3_ENDPOINT_URL}" ] || [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SECRET_ACCESS_KEY}" ]; then
+if [ -z "${S3_ENDPOINT_URL}" ] || [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SECRET_ACCESS_KEY}" ] || [ -z "${BUCKET_NAME}" ]; then
     echo "Error: Missing required arguments."
     usage
 fi
@@ -104,7 +111,6 @@ fi
 # --- Script Variables ---
 # A unique bucket name is generated using the date and a random number to avoid conflicts.
 #BUCKET_NAME="s3-test-bucket-$(date +%s)-${RANDOM}"
-BUCKET_NAME="gdelmont_personal"
 TEST_DIR=$(mktemp -d)
 DOWNLOAD_DIR="s3_test_download_data"
 TEST_FILE_1="test_file_1.txt"
@@ -120,8 +126,8 @@ export AWS_REGION=us-east-1
 # Define the base AWS CLI command with the specified endpoint
 AWS_CMD="aws --endpoint-url ${S3_ENDPOINT_URL} s3"
 
-# 0. Verify AWS CLI installation
-print_header "0. Verifying AWS CLI Installation"
+# TEST: Verify AWS CLI installation
+print_header "Verifying AWS CLI Installation"
 if ! command -v aws &> /dev/null
 then
     print_error "AWS CLI could not be found. Please install it to continue (see: https://aws.amazon.com/cli/)"
@@ -131,51 +137,73 @@ print_success "AWS CLI is installed."
 # Trap SIGINT (Ctrl+C) and SIGTERM to ensure cleanup runs
 trap cleanup SIGINT SIGTERM
 
-# 1. Prepare local test files
-print_header "1. Preparing Local Test Files"
+# Prepare environment for test
+if ! eoss3-cli get-bucket "${BUCKET_NAME}" &> /dev/null; then
+    # The bucket doesn't exist. We try to create it.
+    print_error "Bucket ${BUCKET_NAME} does not exist, create it with \"eoss3-cli create-bucket --name ${BUCKET_NAME} --owner <owner> --path <path>\""
+fi
+
+eoss3-cli purge-bucket "${BUCKET_NAME}"
+
+# TEST: Prepare local test files
+print_header "Preparing Local Test Files"
 mkdir -p "${TEST_DIR}/${SUBDIR}"
 echo "${TEST_FILE_1_CONTENT}" >"${TEST_DIR}/${TEST_FILE_1}"
 echo "${TEST_FILE_2_CONTENT}" >"${TEST_DIR}/${SUBDIR}/${TEST_FILE_2}"
 ls -R "${TEST_DIR}"
 print_success "Local test files and directory created."
 
-# # 2. Create S3 Bucket
-# print_header "2. Testing Bucket Creation (mb)"
-# ${AWS_CMD} mb "s3://${BUCKET_NAME}"
-# if [ $? -ne 0 ]; then
-#     print_error "Failed to create bucket: ${BUCKET_NAME}"
-# fi
-# print_success "Bucket '${BUCKET_NAME}' created."
-
-# 3. Upload a single file
-print_header "3. Testing Single File Upload (cp)"
+# TEST: Upload a single file
+print_header "Testing Single File Upload (cp)"
 ${AWS_CMD} cp "${TEST_DIR}/${TEST_FILE_1}" "s3://${BUCKET_NAME}/"
 if [ $? -ne 0 ]; then
     print_error "Failed to upload ${TEST_FILE_1}."
 fi
 print_success "${TEST_FILE_1} uploaded."
 
-# 4. Sync a directory
-print_header "4. Testing Directory Sync (sync)"
+# TEST: Sync a directory
+print_header "Testing Directory Sync (sync)"
 ${AWS_CMD} sync "${TEST_DIR}/" "s3://${BUCKET_NAME}/"
 if [ $? -ne 0 ]; then
     print_error "Failed to sync directory ${TEST_DIR}."
 fi
 print_success "Directory ${TEST_DIR} synced to bucket."
 
-# 5. List objects in the bucket
-print_header "5. Testing Object Listing (ls)"
+# TEST: List objects in the bucket
+print_header "Testing Object Listing (ls)"
 echo "Listing all objects in the bucket:"
 ${AWS_CMD} ls "s3://${BUCKET_NAME}/" --recursive
 # Verification
 OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/" --recursive | wc -l)
-if [ "${OBJECT_COUNT}" -lt 2 ]; then
-    print_error "Object listing failed. Expected at least 2 objects, found ${OBJECT_COUNT}."
+if [ "${OBJECT_COUNT}" -ne 2 ]; then
+    print_error "Object listing failed. Expected 2 objects, found ${OBJECT_COUNT}."
 fi
 print_success "Objects listed successfully."
 
-# 6. Download a single file
-print_header "6. Testing Single File Download (cp)"
+# TEST: List objects by prefix in the bucket
+print_header "Testing listing by prefix"
+echo "Listing objects by prefix in the bucket:"
+${AWS_CMD} ls "s3://${BUCKET_NAME}/sub"
+# Verification
+OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/sub" | wc -l)
+if [ "${OBJECT_COUNT}" -ne 1 ]; then
+    print_error "Object listing by prefix failed. Expected 1 element, found ${OBJECT_COUNT}."
+fi
+print_success "Objects listing by prefix successfully."
+
+# TEST: List objects in "directory" (i.e. prefix + "/" delimiter) 
+print_header "Testing directory in bucket"
+echo "Listing objects in directory in the bucket:"
+${AWS_CMD} ls "s3://${BUCKET_NAME}/subdir/"
+# Verification
+OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/subdir/" | wc -l)
+if [ "${OBJECT_COUNT}" -ne 1 ]; then
+    print_error "Directory listing failed. Expected 1 element, found ${OBJECT_COUNT}"
+fi
+print_success "Directory listing successfully."
+
+# TEST: Download a single file
+print_header "Testing Single File Download (cp)"
 mkdir -p "${DOWNLOAD_DIR}"
 ${AWS_CMD} cp "s3://${BUCKET_NAME}/${TEST_FILE_1}" "${DOWNLOAD_DIR}/"
 if [ ! -f "${DOWNLOAD_DIR}/${TEST_FILE_1}" ]; then
@@ -188,18 +216,8 @@ if [ "${DOWNLOADED_CONTENT}" != "${TEST_FILE_1_CONTENT}" ]; then
 fi
 print_success "${TEST_FILE_1} downloaded and verified."
 
-# 7. Sync from S3 to local
-print_header "7. Testing S3 to Local Sync (sync)"
-${AWS_CMD} sync "s3://${BUCKET_NAME}/" "${DOWNLOAD_DIR}/"
-if [ ! -f "${DOWNLOAD_DIR}/${SUBDIR}/${TEST_FILE_2}" ]; then
-    print_error "Failed to sync from S3 to local directory."
-fi
-print_success "Sync from S3 to local directory completed."
-echo "Downloaded files:"
-ls -R "${DOWNLOAD_DIR}"
-
-# 8. Delete a single object
-print_header "8. Testing Single Object Deletion (rm)"
+# TEST: Delete a single object
+print_header "Testing Single Object Deletion (rm)"
 ${AWS_CMD} rm "s3://${BUCKET_NAME}/${TEST_FILE_1}"
 if [ $? -ne 0 ]; then
     print_error "Failed to delete object ${TEST_FILE_1}."
