@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -493,7 +494,6 @@ func (b *EosBackend) mdResponseToS3Object(bucketDir string, md *erpc.MDResponse)
 
 func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) (s3response.ListObjectsResult, error) {
 	fmt.Println("ListObjects")
-
 	name := *req.Bucket
 	prefix := *req.Prefix
 
@@ -524,13 +524,12 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 
 	var filters eos.ListDirFilters
 	if fileprefix != "" {
-		filters.Prefix = &fileprefix
+		// filters.Prefix = &fileprefix
 	}
 
 	if err := b.eos.ListDir(ctx, auth, objdir, appendObjects, &filters); err != nil {
 		return s3response.ListObjectsResult{}, err
 	}
-
 	return s3response.ListObjectsResult{
 		Name:      &name,
 		Prefix:    &prefix,
@@ -539,22 +538,90 @@ func (b *EosBackend) ListObjects(ctx context.Context, req *s3.ListObjectsInput) 
 	}, nil
 }
 
+func eosAuthFromLoggedUser(ctx context.Context) eos.Auth {
+	acct, _ := getLoggedAccount(ctx)
+	return eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+}
+
 func (b *EosBackend) ListObjectsV2(ctx context.Context, req *s3.ListObjectsV2Input) (s3response.ListObjectsV2Result, error) {
 	fmt.Println("ListObjectsV2")
 
-	res, err := b.ListObjects(ctx, &s3.ListObjectsInput{
-		Bucket: req.Bucket,
-		Prefix: req.Prefix,
-	})
+	name := *req.Bucket
+	prefix := *req.Prefix
+	delimiter := *req.Delimiter
+
+	// According to the S3 specs, for directory buckets the
+	// only delimiter allowed is "/". So, without a delimiter
+	// we interpret the request as being "recursive".
+	if delimiter != "" && delimiter != "/" {
+		return s3response.ListObjectsV2Result{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+
+	// For directory buckets only prefixes ending with "/" are supported
+	if prefix != "" && prefix[len(prefix)-1] != '/' {
+		return s3response.ListObjectsV2Result{}, s3err.GetAPIError(s3err.ErrInvalidRequest)
+	}
+
+	recursive := false
+	if delimiter == "" {
+		recursive = true
+	}
+
+	bucket, err := b.meta.GetBucket(name)
 	if err != nil {
+		// TODO: improve this error
+		return s3response.ListObjectsV2Result{}, err
+	}
+
+	folder := path.Join(bucket.Path, prefix)
+
+	var objects []s3response.Object
+	var prefixes []types.CommonPrefix
+	prefixesSet := map[string]struct{}{}
+
+	appendObjects := func(md *erpc.MDResponse) {
+		obj := b.mdResponseToS3Object(bucket.Path, md)
+		if isHiddenResource(*obj.Key) {
+			return
+		}
+		if delimiter == "/" && md.Type == erpc.TYPE_CONTAINER {
+			// we should group by prefix and not add this obj
+			// in the list of objects
+			if _, ok := prefixesSet[*obj.Key]; ok {
+				return
+			}
+
+			p := types.CommonPrefix{
+				Prefix: obj.Key,
+			}
+			prefixes = append(prefixes, p)
+			prefixesSet[*obj.Key] = struct{}{}
+			return
+		}
+
+		if md.Type != erpc.TYPE_CONTAINER {
+			objects = append(objects, obj)
+		}
+	}
+
+	filters := &eos.ListDirFilters{
+		Recursive: recursive,
+	}
+
+	if err := b.eos.ListDir(ctx, eosAuthFromLoggedUser(ctx), folder, appendObjects, filters); err != nil {
+		// TODO: improve this error
 		return s3response.ListObjectsV2Result{}, err
 	}
 
 	return s3response.ListObjectsV2Result{
-		Name:      res.Name,
-		Prefix:    res.Prefix,
-		Delimiter: res.Delimiter,
-		Contents:  res.Contents,
+		Name:           &name,
+		Prefix:         &prefix,
+		Delimiter:      &delimiter,
+		Contents:       objects,
+		CommonPrefixes: prefixes,
 	}, nil
 }
 
