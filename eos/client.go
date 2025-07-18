@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os/user"
@@ -135,7 +136,7 @@ func (c *Client) Stat(ctx context.Context, auth Auth, path string) (*erpc.MDResp
 }
 
 type ListDirFilters struct {
-	Prefix *string
+	Recursive bool
 }
 
 func (c *Client) ListDir(ctx context.Context, auth Auth, dir string, f func(*erpc.MDResponse), filters *ListDirFilters) error {
@@ -154,11 +155,8 @@ func (c *Client) ListDir(ctx context.Context, auth Auth, dir string, f func(*erp
 
 	// Add further filters to the find request based on user input
 	if filters != nil {
-		req.Selection = &erpc.MDSelection{
-			Select: true,
-		}
-		if filters.Prefix != nil {
-			req.Selection.RegexpFilename = []byte("^" + *filters.Prefix)
+		if filters.Recursive {
+			req.Maxdepth = math.MaxUint64
 		}
 	}
 
