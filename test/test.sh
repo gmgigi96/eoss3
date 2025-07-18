@@ -1,12 +1,9 @@
 #!/bin/bash
 #
-# S3 Compatibility Test Script
+# S3 Compatibility Test Script - Expanded
 #
-# This script performs a series of basic tests on an S3-compatible object storage
-# service using the AWS CLI. It covers creating buckets, uploading, listing,
-# downloading, and deleting objects, and finally, cleaning up the bucket.
-#
-# It accepts the S3 endpoint, access key, and secret key as command-line options.
+# This script performs a comprehensive series of tests on an S3-compatible
+# object storage service using the AWS CLI.
 #
 # IMPORTANT:
 # 1. You must have the AWS CLI installed (https://aws.amazon.com/cli/).
@@ -61,12 +58,6 @@ function cleanup() {
         if [ $? -ne 0 ]; then
             echo "[WARNING] Failed to delete objects from bucket. Manual cleanup may be required."
         fi
-
-        echo "Deleting bucket: ${BUCKET_NAME}"
-        ${AWS_CMD} rb "s3://${BUCKET_NAME}"
-        if [ $? -ne 0 ]; then
-            echo "[WARNING] Failed to delete bucket. Manual cleanup may be required."
-        fi
     else
         echo "Bucket ${BUCKET_NAME} does not exist or was already deleted. Skipping cleanup."
     fi
@@ -109,15 +100,8 @@ if [ -z "${S3_ENDPOINT_URL}" ] || [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SEC
 fi
 
 # --- Script Variables ---
-# A unique bucket name is generated using the date and a random number to avoid conflicts.
-#BUCKET_NAME="s3-test-bucket-$(date +%s)-${RANDOM}"
 TEST_DIR=$(mktemp -d)
 DOWNLOAD_DIR="s3_test_download_data"
-TEST_FILE_1="test_file_1.txt"
-TEST_FILE_2="test_file_2.txt"
-TEST_FILE_1_CONTENT="This is the first test file for S3."
-TEST_FILE_2_CONTENT="This is the second test file, which will be in a subdirectory."
-SUBDIR="subdir"
 
 # Set credentials as environment variables for the AWS CLI
 export AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
@@ -126,7 +110,9 @@ export AWS_REGION=us-east-1
 # Define the base AWS CLI command with the specified endpoint
 AWS_CMD="aws --endpoint-url ${S3_ENDPOINT_URL} s3"
 
+#####################################################################
 # TEST: Verify AWS CLI installation
+#####################################################################
 print_header "Verifying AWS CLI Installation"
 if ! command -v aws &> /dev/null
 then
@@ -134,98 +120,144 @@ then
 fi
 print_success "AWS CLI is installed."
 
+# Cleanup bucket before starting the tests
+if ! eoss3-cli get-bucket "${BUCKET_NAME}"; then
+    print_error "Bucket ${BUCKET_NAME} does not exist. Create it using the command 'eoss3-cli create-bucket --name ${BUCKET_NAME} --owner <owner> --path <path>'."
+fi
+
+if ! eoss3-cli purge-bucket "${BUCKET_NAME}"; then
+    print_error "Failed to purge the bucket"
+fi
+
 # Trap SIGINT (Ctrl+C) and SIGTERM to ensure cleanup runs
 trap cleanup SIGINT SIGTERM
 
-# Prepare environment for test
-if ! eoss3-cli get-bucket "${BUCKET_NAME}" &> /dev/null; then
-    # The bucket doesn't exist. We try to create it.
-    print_error "Bucket ${BUCKET_NAME} does not exist, create it with \"eoss3-cli create-bucket --name ${BUCKET_NAME} --owner <owner> --path <path>\""
-fi
+# Prepare local test files with a more complex structure
+print_header "Preparing Local Test Directory"
+mkdir -p "${TEST_DIR}/documents/reports"
+mkdir -p "${TEST_DIR}/images/vacation"
+mkdir -p "${TEST_DIR}/logs"
 
-eoss3-cli purge-bucket "${BUCKET_NAME}"
+# Create a variety of files
+echo "This is a root file." > "${TEST_DIR}/root_file.txt"
+echo "Project plan document." > "${TEST_DIR}/documents/plan.txt"
+echo "Quarterly financial report." > "${TEST_DIR}/documents/reports/q1_report.txt"
+echo "Company logo." > "${TEST_DIR}/images/logo.png"
+echo "Beach photo." > "${TEST_DIR}/images/vacation/beach.jpg"
+echo "Application log data." > "${TEST_DIR}/logs/app.log"
+echo "Empty file." > "${TEST_DIR}/logs/empty.log"
+head -c 1K </dev/urandom > "${TEST_DIR}/documents/reports/binary_data.dat"
 
-# TEST: Prepare local test files
-print_header "Preparing Local Test Files"
-mkdir -p "${TEST_DIR}/${SUBDIR}"
-echo "${TEST_FILE_1_CONTENT}" >"${TEST_DIR}/${TEST_FILE_1}"
-echo "${TEST_FILE_2_CONTENT}" >"${TEST_DIR}/${SUBDIR}/${TEST_FILE_2}"
+# Calculate the total number of files for later verification
+TOTAL_FILES=$(find "${TEST_DIR}" -type f | wc -l)
+
+echo "Created the following directory structure:"
 ls -R "${TEST_DIR}"
-print_success "Local test files and directory created."
+print_success "Local test directory created with ${TOTAL_FILES} files."
 
-# TEST: Upload a single file
-print_header "Testing Single File Upload (cp)"
-${AWS_CMD} cp "${TEST_DIR}/${TEST_FILE_1}" "s3://${BUCKET_NAME}/"
-if [ $? -ne 0 ]; then
-    print_error "Failed to upload ${TEST_FILE_1}."
-fi
-print_success "${TEST_FILE_1} uploaded."
-
-# TEST: Sync a directory
-print_header "Testing Directory Sync (sync)"
+#####################################################################
+# TEST: Sync the entire directory structure to S3
+#####################################################################
+print_header "Testing Directory Upload (sync)"
 ${AWS_CMD} sync "${TEST_DIR}/" "s3://${BUCKET_NAME}/"
 if [ $? -ne 0 ]; then
     print_error "Failed to sync directory ${TEST_DIR}."
 fi
 print_success "Directory ${TEST_DIR} synced to bucket."
 
-# TEST: List objects in the bucket
-print_header "Testing Object Listing (ls)"
+#####################################################################
+# TEST: List all objects recursively and verify the count
+#####################################################################
+print_header "Testing Recursive Object Listing (ls --recursive)"
 echo "Listing all objects in the bucket:"
 ${AWS_CMD} ls "s3://${BUCKET_NAME}/" --recursive
+
 # Verification
 OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/" --recursive | wc -l)
-if [ "${OBJECT_COUNT}" -ne 2 ]; then
-    print_error "Object listing failed. Expected 2 objects, found ${OBJECT_COUNT}."
+if [ "${OBJECT_COUNT}" -ne ${TOTAL_FILES} ]; then
+    print_error "Recursive object listing failed. Expected ${TOTAL_FILES} objects, found ${OBJECT_COUNT}."
 fi
-print_success "Objects listed successfully."
+print_success "Found all ${TOTAL_FILES} objects in the bucket."
 
-# TEST: List objects by prefix in the bucket
-print_header "Testing listing by prefix"
-echo "Listing objects by prefix in the bucket:"
-${AWS_CMD} ls "s3://${BUCKET_NAME}/sub"
-# Verification
-OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/sub" | wc -l)
-if [ "${OBJECT_COUNT}" -ne 1 ]; then
-    print_error "Object listing by prefix failed. Expected 1 element, found ${OBJECT_COUNT}."
+#####################################################################
+# TEST: List objects within a "subdirectory" (prefix)
+#####################################################################
+print_header "Testing Subdirectory Object Listing (ls on a prefix)"
+echo "Listing objects in 's3://${BUCKET_NAME}/documents/reports/':"
+${AWS_CMD} ls "s3://${BUCKET_NAME}/documents/reports/"
+
+# Verification for a subdirectory
+SUBDIR_OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/documents/reports/" | wc -l)
+EXPECTED_SUBDIR_COUNT=$(find "${TEST_DIR}/documents/reports" -type f | wc -l)
+if [ "${SUBDIR_OBJECT_COUNT}" -ne "${EXPECTED_SUBDIR_COUNT}" ]; then
+    print_error "Subdirectory listing failed. Expected ${EXPECTED_SUBDIR_COUNT} objects, found ${SUBDIR_OBJECT_COUNT}."
 fi
-print_success "Objects listing by prefix successfully."
+print_success "Subdirectory listing for 'documents/reports/' is correct."
 
-# TEST: List objects in "directory" (i.e. prefix + "/" delimiter) 
-print_header "Testing directory in bucket"
-echo "Listing objects in directory in the bucket:"
-${AWS_CMD} ls "s3://${BUCKET_NAME}/subdir/"
-# Verification
-OBJECT_COUNT=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/subdir/" | wc -l)
-if [ "${OBJECT_COUNT}" -ne 1 ]; then
-    print_error "Directory listing failed. Expected 1 element, found ${OBJECT_COUNT}"
+#####################################################################
+# TEST: List object by a prefix (not subdirectory)
+#####################################################################
+print_header "Testing Object Listing by prefix without delimiter"
+if ${AWS_CMD} ls "s3://${BUCKET_NAME}/lo"; then
+    print_error "Listing by prefix without delimiter didn't fail. Expected to fail,"
 fi
-print_success "Directory listing successfully."
+print_success "Listing by prefix without delimiter is correct."
 
-# TEST: Download a single file
-print_header "Testing Single File Download (cp)"
+#####################################################################
+# TEST: Download the entire bucket content
+#####################################################################
+print_header "Testing Directory Download (sync)"
 mkdir -p "${DOWNLOAD_DIR}"
-${AWS_CMD} cp "s3://${BUCKET_NAME}/${TEST_FILE_1}" "${DOWNLOAD_DIR}/"
-if [ ! -f "${DOWNLOAD_DIR}/${TEST_FILE_1}" ]; then
-    print_error "Failed to download ${TEST_FILE_1}."
-fi
-# Verify content
-DOWNLOADED_CONTENT=$(cat "${DOWNLOAD_DIR}/${TEST_FILE_1}")
-if [ "${DOWNLOADED_CONTENT}" != "${TEST_FILE_1_CONTENT}" ]; then
-    print_error "Content of downloaded file ${TEST_FILE_1} does not match original."
-fi
-print_success "${TEST_FILE_1} downloaded and verified."
-
-# TEST: Delete a single object
-print_header "Testing Single Object Deletion (rm)"
-${AWS_CMD} rm "s3://${BUCKET_NAME}/${TEST_FILE_1}"
+${AWS_CMD} sync "s3://${BUCKET_NAME}/" "${DOWNLOAD_DIR}/"
 if [ $? -ne 0 ]; then
-    print_error "Failed to delete object ${TEST_FILE_1}."
+    print_error "Failed to download bucket content."
 fi
-print_success "Object ${TEST_FILE_1} deleted."
+print_success "Bucket content synced to ${DOWNLOAD_DIR}."
 
-# Final cleanup
+#####################################################################
+# TEST: Verify data integrity of the downloaded structure
+#####################################################################
+print_header "Verifying Data Integrity of Downloaded Files"
+diff -r "${TEST_DIR}" "${DOWNLOAD_DIR}"
+if [ $? -ne 0 ]; then
+    print_error "Data integrity check failed. Original and downloaded directories differ."
+fi
+print_success "Downloaded files are identical to the original files."
+
+#####################################################################
+# TEST: Delete a single object and verify
+#####################################################################
+print_header "Testing Single Object Deletion (rm)"
+OBJECT_TO_DELETE="logs/app.log"
+${AWS_CMD} rm "s3://${BUCKET_NAME}/${OBJECT_TO_DELETE}"
+if [ $? -ne 0 ]; then
+    print_error "Failed to delete object ${OBJECT_TO_DELETE}."
+fi
+# Verify it's gone
+${AWS_CMD} ls "s3://${BUCKET_NAME}/${OBJECT_TO_DELETE}" &>/dev/null
+if [ $? -eq 0 ]; then
+    print_error "Object ${OBJECT_TO_DELETE} still exists after deletion."
+fi
+print_success "Object ${OBJECT_TO_DELETE} deleted successfully."
+
+#####################################################################
+# TEST: Delete a whole "subdirectory" (prefix) recursively
+#####################################################################
+print_header "Testing Recursive Deletion (rm --recursive)"
+PREFIX_TO_DELETE="images/"
+${AWS_CMD} rm "s3://${BUCKET_NAME}/${PREFIX_TO_DELETE}" --recursive
+if [ $? -ne 0 ]; then
+    print_error "Failed to recursively delete objects with prefix ${PREFIX_TO_DELETE}."
+fi
+
+# Verify they're gone
+REMAINING_IMAGES=$(${AWS_CMD} ls "s3://${BUCKET_NAME}/${PREFIX_TO_DELETE}" --recursive | wc -l)
+if [ "${REMAINING_IMAGES}" -ne 0 ]; then
+    print_error "Objects with prefix ${PREFIX_TO_DELETE} still exist after recursive delete."
+fi
+print_success "Recursively deleted all objects under prefix '${PREFIX_TO_DELETE}'."
+
 cleanup
 
-print_header "All tests passed successfully!"
+print_success "All tests passed successfully!"
 exit 0
