@@ -10,16 +10,23 @@
 
 # --- Helper Functions ---
 function usage() {
-    echo "Usage: $0 -e <S3_ENDPOINT_URL> -a <S3_ACCESS_KEY_ID> -s <S3_SECRET_ACCESS_KEY> -b <BUCKET>"
+    echo "Usage: $0 -e <S3_ENDPOINT_URL> -a <S3_ACCESS_KEY_ID> -s <S3_SECRET_ACCESS_KEY> -b <BUCKET> [--no-color]"
     echo ""
     echo "Options:"
     echo "  -e, --endpoint   S3 endpoint URL (e.g., 'http://127.0.0.1:7070')"
     echo "  -a, --access-key S3 access key ID"
     echo "  -s, --secret-key S3 secret access key"
     echo "  -b, --bucket     Bucket name"
+    echo "      --no-color   Disable colors printing"
     echo "  -h, --help       Display this help and exit"
     exit 1
 }
+
+# Color definitions
+COLOR_GREEN='\033[0;32m'
+COLOR_RED='\033[0;31m'
+COLOR_YELLOW='\033[0;33m'
+COLOR_RESET='\033[0m' # No Color
 
 header_count=0
 function print_header() {
@@ -30,14 +37,31 @@ function print_header() {
 }
 
 function print_success() {
-    echo "[SUCCESS] $1"
+    if [ "$USE_COLOR" == true ]; then
+        echo -e "${COLOR_GREEN}[SUCCESS] $1${COLOR_RESET}"
+    else
+        echo "[SUCCESS] $1"
+    fi
 }
 
 function print_error() {
-    echo "[ERROR] $1" >&2
+    if [ "$USE_COLOR" == true ]; then
+        echo -e "${COLOR_RED}[ERROR] $1${COLOR_RESET}"
+    else
+        echo "[ERROR] $1"
+    fi
+    
     # In case of an error, attempt to clean up before exiting.
     cleanup
     exit 1
+}
+
+function print_warning() {
+    if [ "$USE_COLOR" == true ]; then
+        echo -e "${COLOR_YELLOW}[WARNING] $1${COLOR_RESET}"
+    else
+        echo "[WARNING] $1"
+    fi
 }
 
 function cleanup() {
@@ -56,7 +80,7 @@ function cleanup() {
         echo "Deleting all objects from bucket: ${BUCKET_NAME}"
         ${AWS_CMD} rm "s3://${BUCKET_NAME}" --recursive
         if [ $? -ne 0 ]; then
-            echo "[WARNING] Failed to delete objects from bucket. Manual cleanup may be required."
+            print_warning "Failed to delete objects from bucket. Manual cleanup may be required."
         fi
     else
         echo "Bucket ${BUCKET_NAME} does not exist or was already deleted. Skipping cleanup."
@@ -64,24 +88,28 @@ function cleanup() {
     print_success "Cleanup complete."
 }
 
-# --- Main Test Execution ---
+USE_COLOR=true
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
     -e | --endpoint)
         S3_ENDPOINT_URL="$2"
-        shift
+        shift 2
         ;;
     -a | --access-key)
         S3_ACCESS_KEY_ID="$2"
-        shift
+        shift 2
         ;;
     -s | --secret-key)
         S3_SECRET_ACCESS_KEY="$2"
-        shift
+        shift 2
         ;;
     -b | --bucket)
         BUCKET_NAME="$2"
+        shift 2
+        ;;
+    --no-color)
+        USE_COLOR=false
         shift
         ;;
     -h | --help) usage ;;
@@ -90,7 +118,6 @@ while [[ "$#" -gt 0 ]]; do
         usage
         ;;
     esac
-    shift
 done
 
 # Check if all required options are provided
@@ -98,6 +125,7 @@ if [ -z "${S3_ENDPOINT_URL}" ] || [ -z "${S3_ACCESS_KEY_ID}" ] || [ -z "${S3_SEC
     echo "Error: Missing required arguments."
     usage
 fi
+
 
 # --- Script Variables ---
 TEST_DIR=$(mktemp -d)
