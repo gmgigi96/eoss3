@@ -34,6 +34,8 @@ type Config struct {
 	HttpURL string `mapstructure:"http_url"`
 	// Authkey is the key that authorizes this client to connect to the EOS GRPC service
 	Authkey string `mapstructure:"authkey"`
+	// Insecure is set to true if the client does not want to use TLS.
+	Insecure bool `mapstructure:"insecure"`
 
 	// ComputeMD5 on put so the client will be happy
 	// Once EOS will support storing the MD5, this can be retrieved
@@ -71,9 +73,10 @@ func New(cfg *Config, meta meta.BucketStorer) (*EosBackend, error) {
 	}
 
 	eosCl, err := eos.NewClient(eos.Config{
-		GrpcURL: cfg.GrpcURL,
-		HttpURL: cfg.HttpURL,
-		AuthKey: cfg.Authkey,
+		GrpcURL:  cfg.GrpcURL,
+		HttpURL:  cfg.HttpURL,
+		AuthKey:  cfg.Authkey,
+		Insecure: cfg.Insecure,
 	})
 	if err != nil {
 		return nil, err

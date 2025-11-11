@@ -2,6 +2,7 @@ package eos
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	erpc "github.com/cern-eos/go-eosgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -54,6 +56,8 @@ type Config struct {
 	HttpURL string
 	// AuthKey is the key that authorizes the client to the HTTP/GRPC servers.
 	AuthKey string
+	// Insecure is set to true if the clients does not want to use TLS.
+	Insecure bool
 }
 
 // Validate returns nil if the configuration is valid,
@@ -93,7 +97,19 @@ func NewClient(cfg Config) (*Client, error) {
 		},
 	}
 
-	conn, err := grpc.NewClient(cfg.GrpcURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var creds credentials.TransportCredentials
+
+	if cfg.Insecure {
+		creds = insecure.NewCredentials()
+	} else {
+		certpool, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, err
+		}
+		creds = credentials.NewClientTLSFromCert(certpool, "")
+	}
+
+	conn, err := grpc.NewClient(cfg.GrpcURL, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("error getting grpc client: %w", err)
 	}
