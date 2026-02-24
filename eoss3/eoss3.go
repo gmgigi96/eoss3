@@ -22,6 +22,7 @@ import (
 	"github.com/gmgigi96/eoss3/eos"
 	"github.com/gmgigi96/eoss3/meta"
 	"github.com/versity/versitygw/auth"
+	"github.com/versity/versitygw/backend"
 	"github.com/versity/versitygw/s3err"
 	"github.com/versity/versitygw/s3response"
 	"github.com/versity/versitygw/s3select"
@@ -64,7 +65,7 @@ type EosBackend struct {
 
 	eos  *eos.Client
 	meta meta.BucketStorer
-	BackendUnsupported
+	backend.BackendUnsupported
 }
 
 func New(cfg *Config, meta meta.BucketStorer) (*EosBackend, error) {
@@ -201,7 +202,7 @@ func (b *EosBackend) CreateBucket(ctx context.Context, req *s3.CreateBucketInput
 		return err
 	}
 	if defaultPath == "" {
-		return s3err.GetAPIError(s3err.ErrInvalidQueryParams)
+		return s3err.GetAPIError(s3err.ErrInvalidArgument)
 	}
 
 	bucketPath := filepath.Join(defaultPath, name)
