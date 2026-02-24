@@ -353,7 +353,7 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 	}
 }
 
-func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Reader, length uint64) error {
+func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Reader, length uint64, offset *uint64) error {
 	url := c.buildFullHttpUrl(auth, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
@@ -365,6 +365,10 @@ func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Rea
 		req.Header.Set("x-gateway-authorization", c.authKey)
 		req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
 		req.Header.Set("remote-user", auth.Username())
+		if offset != nil {
+			lastByte := *offset + length
+			req.Header.Set("x-upload-range", fmt.Sprintf("bytes=%d-%d", *offset, lastByte))
+		}
 
 		fmt.Println("doing request to", req.URL.String())
 
