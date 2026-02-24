@@ -84,6 +84,28 @@ func (b *EosBackend) ListParts(context.Context, *s3.ListPartsInput) (s3response.
 	panic("not yet implemented")
 }
 
-func (b *EosBackend) UploadPart(context.Context, *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
-	panic("not yet implemented")
+func (b *EosBackend) UploadPart(ctx context.Context, req *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
+	fmt.Println("UploadPart")
+	name := *req.Bucket
+
+	bucket, err := b.meta.GetBucket(name)
+	if err != nil {
+		return nil, err
+	}
+
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return nil, s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+
+	// TODO: we should check if the upload id is correct
+	partFile := filepath.Join(multipartFolder(&bucket, *req.Key, *req.UploadId), fmt.Sprintf("%05d", *req.PartNumber))
+
+	err = b.eos.Upload(ctx, auth, partFile, req.Body, uint64(*req.ContentLength))
+	return &s3.UploadPartOutput{}, err
 }
