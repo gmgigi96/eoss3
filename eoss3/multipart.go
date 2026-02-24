@@ -57,8 +57,27 @@ func (b *EosBackend) CompleteMultipartUpload(context.Context, *s3.CompleteMultip
 	panic("not yet implemented")
 }
 
-func (b *EosBackend) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput) error {
-	panic("not yet implemented")
+func (b *EosBackend) AbortMultipartUpload(ctx context.Context, req *s3.AbortMultipartUploadInput) error {
+	fmt.Println("AbortMultipartUpload")
+	name := *req.Bucket
+
+	bucket, err := b.meta.GetBucket(name)
+	if err != nil {
+		return err
+	}
+
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+
+	folder := multipartFolder(&bucket, *req.Key, *req.UploadId)
+	return b.eos.Rmdir(ctx, auth, folder)
 }
 
 func (b *EosBackend) ListParts(context.Context, *s3.ListPartsInput) (s3response.ListPartsResult, error) {
