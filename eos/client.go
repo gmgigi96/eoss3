@@ -279,6 +279,28 @@ func (c *Client) Remove(ctx context.Context, auth Auth, path string, recursive b
 	return nil
 }
 
+func (c *Client) Rename(ctx context.Context, auth Auth, source, destination string) error {
+	req := c.initNsRequest(auth)
+	req.Command = &erpc.NSRequest_Rename{
+		Rename: &erpc.NSRequest_RenameRequest{
+			Id: &erpc.MDId{
+				Path: []byte(source),
+			},
+			Target: []byte(destination),
+		},
+	}
+	res, err := c.grpcClient.Exec(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	if res.Error.Code != 0 {
+		return errors.New(res.Error.Msg)
+	}
+
+	return nil
+}
+
 func (c *Client) buildFullHttpUrl(auth Auth, path string) string {
 	fullurl := strings.TrimRight(c.httpUrl, "/")
 	fullurl += "/"
