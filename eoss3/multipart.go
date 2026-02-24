@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	go_eosgrpc "github.com/cern-eos/go-eosgrpc"
 	"github.com/gmgigi96/eoss3/eos"
 	"github.com/gmgigi96/eoss3/meta"
 	"github.com/google/uuid"
@@ -53,8 +54,65 @@ func (b *EosBackend) CreateMultipartUpload(ctx context.Context, req s3response.C
 	}, nil
 }
 
-func (b *EosBackend) CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput) (_ s3response.CompleteMultipartUploadResult, versionid string, _ error) {
-	panic("not yet implemented")
+func (b *EosBackend) CompleteMultipartUpload(ctx context.Context, req *s3.CompleteMultipartUploadInput) (_ s3response.CompleteMultipartUploadResult, versionId string, _ error) {
+	fmt.Println("CompleteMultipartUpload")
+	name := *req.Bucket
+
+	// TODO: check that all parts have been provided
+	// This implementation is very inefficient. We could use in the future
+	// the clone mechanism to not actually copy the parts.
+
+	bucket, err := b.meta.GetBucket(name)
+	if err != nil {
+		return s3response.CompleteMultipartUploadResult{}, "", err
+	}
+
+	folder := multipartFolder(&bucket, *req.Key, *req.UploadId)
+
+	acct, ok := getLoggedAccount(ctx)
+	if !ok {
+		return s3response.CompleteMultipartUploadResult{}, "", s3err.GetAPIError(s3err.ErrAccessDenied)
+	}
+
+	auth := eos.Auth{
+		Uid: uint64(acct.UserID),
+		Gid: uint64(acct.GroupID),
+	}
+
+	tmpFile := filepath.Join(folder, "tmp")
+
+	var offset uint64
+	if err := b.eos.ListDir(ctx, auth, folder, func(m *go_eosgrpc.MDResponse) {
+		// here we read the part and we inject the part into tmpFile
+		if m.Type != go_eosgrpc.TYPE_FILE {
+			return
+		}
+
+		src := string(m.Fmd.Path)
+		data, length, err := b.eos.Download(ctx, auth, src)
+		if err != nil {
+			panic(err) // TODO: we need to return here and stop everything
+		}
+		defer data.Close()
+
+		if err := b.eos.Upload(ctx, auth, tmpFile, data, uint64(length), &offset); err != nil {
+			panic(err) // TODO: we need to return here and stop everything
+		}
+		offset += uint64(length)
+	}, nil); err != nil {
+		// TODO: should we do a cleanup?
+		return s3response.CompleteMultipartUploadResult{}, "", err
+	}
+
+	if err := b.eos.Rename(ctx, auth, tmpFile, filepath.Join(bucket.Path, *req.Key)); err != nil {
+		return s3response.CompleteMultipartUploadResult{}, "", err
+	}
+
+	err = b.eos.Rmdir(ctx, auth, folder)
+	return s3response.CompleteMultipartUploadResult{
+		Bucket: req.Bucket,
+		Key:    req.Key,
+	}, "", err
 }
 
 func (b *EosBackend) AbortMultipartUpload(ctx context.Context, req *s3.AbortMultipartUploadInput) error {
@@ -106,6 +164,6 @@ func (b *EosBackend) UploadPart(ctx context.Context, req *s3.UploadPartInput) (*
 	// TODO: we should check if the upload id is correct
 	partFile := filepath.Join(multipartFolder(&bucket, *req.Key, *req.UploadId), fmt.Sprintf("%05d", *req.PartNumber))
 
-	err = b.eos.Upload(ctx, auth, partFile, req.Body, uint64(*req.ContentLength))
+	err = b.eos.Upload(ctx, auth, partFile, req.Body, uint64(*req.ContentLength), nil)
 	return &s3.UploadPartOutput{}, err
 }
