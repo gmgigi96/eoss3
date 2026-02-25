@@ -3,19 +3,23 @@ package meta
 import (
 	"slices"
 	"sync"
+	"time"
 )
 
 type InMemoryBucketStorer struct {
 	m       sync.RWMutex
-	buckets map[string]Bucket // name -> bucket
-	users   map[int][]string  // uid -> list of bucket name
-	paths   map[int]string    // map holding for each user (uid) their default bucket path
+	buckets map[string]Bucket            // name -> bucket
+	users   map[int][]string             // uid -> list of bucket name
+	paths   map[int]string               // map holding for each user (uid) their default bucket path
+	uploads map[string][]MultipartUpload // bucket -> upload info
 }
 
 func NewInMemoryBucketStorer() (*InMemoryBucketStorer, error) {
 	return &InMemoryBucketStorer{
 		buckets: make(map[string]Bucket),
 		users:   make(map[int][]string),
+		paths:   make(map[int]string),
+		uploads: make(map[string][]MultipartUpload),
 	}, nil
 }
 
@@ -115,4 +119,34 @@ func (s *InMemoryBucketStorer) StoreDefaultBucketPath(uid int, path string) erro
 
 	s.paths[uid] = path
 	return nil
+}
+
+func (s *InMemoryBucketStorer) StoreMultipartUpload(bucket string, initiator int, uploadId string, initiated time.Time) error {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.uploads[bucket] = append(s.uploads[bucket], MultipartUpload{
+		Bucket:    bucket,
+		UploadId:  uploadId,
+		Initiator: initiator,
+		Initiated: initiated,
+	})
+	return nil
+}
+
+func (s *InMemoryBucketStorer) DeleteMultipartUpload(bucket, uploadId string) error {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.uploads[bucket] = slices.DeleteFunc(s.uploads[bucket], func(upload MultipartUpload) bool {
+		return upload.UploadId == uploadId
+	})
+	return nil
+}
+
+func (s *InMemoryBucketStorer) ListMultipartUploads(bucket string) ([]MultipartUpload, error) {
+	s.m.RLock()
+	defer s.m.RUnlock()
+
+	return s.uploads[bucket], nil
 }

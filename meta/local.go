@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
 )
@@ -20,6 +21,7 @@ type Config struct {
 const (
 	bucketsFolder = "buckets"
 	usersFolder   = "users"
+	uploadsFolder = "uploads"
 	metadataFile  = ".metadata"
 )
 
@@ -53,8 +55,9 @@ func NewLocalBucketStorer(folder string) (*LocalBucketStorer, error) {
 }
 
 func (s *LocalBucketStorer) init() {
-	_ = os.MkdirAll(s.bucketFolder(""), 0755)
-	_ = os.MkdirAll(s.userFolder(0), 0755)
+	_ = os.MkdirAll(s.bucketFolder(""), 0700)
+	_ = os.MkdirAll(s.userFolder(0), 0700)
+	_ = os.MkdirAll(s.uploadsFolder(""), 0700)
 }
 
 func (s *LocalBucketStorer) bucketFolder(name string) string {
@@ -69,6 +72,10 @@ func (s *LocalBucketStorer) userFolder(uid int) string {
 	return filepath.Join(s.base, usersFolder, uidstr)
 }
 
+func (s *LocalBucketStorer) uploadsFolder(bucket string) string {
+	return filepath.Join(s.base, uploadsFolder, bucket)
+}
+
 func (s *LocalBucketStorer) CreateBucket(bucket Bucket) error {
 	if _, err := s.GetBucket(bucket.Name); err == nil {
 		return ErrBucketAlreadyExisting
@@ -79,7 +86,7 @@ func (s *LocalBucketStorer) CreateBucket(bucket Bucket) error {
 		return err
 	}
 
-	return os.WriteFile(s.bucketFolder(bucket.Name), data, 0644)
+	return os.WriteFile(s.bucketFolder(bucket.Name), data, 0600)
 }
 
 func (s *LocalBucketStorer) GetBucket(name string) (Bucket, error) {
@@ -126,7 +133,7 @@ func (s *LocalBucketStorer) ListBuckets() ([]Bucket, error) {
 
 func (s *LocalBucketStorer) AssignBucket(name string, uid int) error {
 	userpath := s.userFolder(uid)
-	if err := os.MkdirAll(userpath, 0755); err != nil {
+	if err := os.MkdirAll(userpath, 0700); err != nil {
 		return err
 	}
 
@@ -218,4 +225,55 @@ func (s *LocalBucketStorer) StoreDefaultBucketPath(uid int, path string) error {
 	}
 	meta.DefaultBucketPath = path
 	return s.storeUserMetadata(uid, meta)
+}
+
+func (s *LocalBucketStorer) StoreMultipartUpload(bucket string, initiator int, uploadId string, initiated time.Time) error {
+	uploadsPath := s.uploadsFolder(bucket)
+	if err := os.MkdirAll(uploadsPath, 0700); err != nil {
+		return err
+	}
+
+	upload := MultipartUpload{
+		Bucket:    bucket,
+		UploadId:  uploadId,
+		Initiator: initiator,
+		Initiated: initiated,
+	}
+	data, err := json.Marshal(upload)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(uploadsPath, uploadId), data, 0600)
+}
+
+func (s *LocalBucketStorer) DeleteMultipartUpload(bucket, uploadId string) error {
+	_ = os.Remove(filepath.Join(s.uploadsFolder(bucket), uploadId))
+	return nil
+}
+
+func (s *LocalBucketStorer) ListMultipartUploads(bucket string) ([]MultipartUpload, error) {
+	uploadsPath := s.uploadsFolder(bucket)
+
+	entries, err := os.ReadDir(uploadsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []MultipartUpload{}, nil
+		}
+		return nil, err
+	}
+
+	var uploads []MultipartUpload
+	for _, e := range entries {
+		var upload MultipartUpload
+		data, err := os.ReadFile(s.uploadsFolder(e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &upload); err != nil {
+			return nil, err
+		}
+		uploads = append(uploads, upload)
+	}
+	return uploads, nil
 }

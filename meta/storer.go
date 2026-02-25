@@ -18,6 +18,13 @@ type Bucket struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type MultipartUpload struct {
+	Bucket    string    `json:"bucket"`
+	UploadId  string    `json:"upload_id"`
+	Initiator int       `json:"initiator"`
+	Initiated time.Time `json:"initiated"`
+}
+
 type BucketStorer interface {
 	CreateBucket(bucket Bucket) error
 	GetBucket(name string) (Bucket, error)
@@ -31,6 +38,10 @@ type BucketStorer interface {
 
 	GetDefaultBucketPath(uid int) (string, error)
 	StoreDefaultBucketPath(uid int, path string) error
+
+	StoreMultipartUpload(bucket string, initiator int, uploadId string, initiated time.Time) error
+	DeleteMultipartUpload(bucket, uploadId string) error
+	ListMultipartUploads(bucket string) ([]MultipartUpload, error)
 }
 
 var (
