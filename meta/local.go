@@ -266,7 +266,7 @@ func (s *LocalBucketStorer) ListMultipartUploads(bucket string) ([]MultipartUplo
 	var uploads []MultipartUpload
 	for _, e := range entries {
 		var upload MultipartUpload
-		data, err := os.ReadFile(s.uploadsFolder(e.Name()))
+		data, err := os.ReadFile(filepath.Join(uploadsPath, e.Name()))
 		if err != nil {
 			return nil, err
 		}

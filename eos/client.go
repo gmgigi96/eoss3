@@ -327,7 +327,7 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 
 		res, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("error doing request: %w", err)
 		}
 
 		if res.StatusCode == http.StatusFound || res.StatusCode == http.StatusTemporaryRedirect {
@@ -335,12 +335,12 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 
 			loc, err := res.Location()
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, fmt.Errorf("error getting redirection location: %w", err)
 			}
 
 			req, err = http.NewRequestWithContext(ctx, http.MethodGet, loc.String(), nil)
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, fmt.Errorf("error creating new request: %w", err)
 			}
 			continue
 		}
@@ -353,7 +353,85 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 	}
 }
 
-func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Reader, length uint64, offset *uint64) error {
+func (c *Client) UploadChunk(ctx context.Context, auth Auth, path string, chunk io.Reader, length, offset, total uint64) error {
+	url := c.buildFullHttpUrl(auth, path)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("x-gateway-authorization", c.authKey)
+	req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
+	req.Header.Set("remote-user", auth.Username())
+
+	for {
+
+		// req.Header.Set("content-length", strconv.FormatUint(length, 10))
+		// req.Header["x-upload-range"] = []string{}
+		// req.Header["x-upload-totalsize"] = []string{strconv.FormatUint(total, 10)}
+
+		fmt.Println("doing request to", req.URL.String(), req.Header)
+
+		res, err := c.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("**************************************** got response with status code", res.StatusCode)
+
+		// io.Copy(io.Discard, req.Body)
+		// req.Body.Close()
+
+		if res.StatusCode == http.StatusTemporaryRedirect {
+			// we got redirected to an FST
+
+			loc, err := res.Location()
+			if err != nil {
+				return err
+			}
+
+			req, err = http.NewRequestWithContext(ctx, http.MethodPut, loc.String(), chunk)
+			if err != nil {
+				return err
+			}
+			// > Accept: */*
+			// > x-upload-totalsize: 524288000
+			// > x-upload-range: bytes=0-5242879
+			// > X-Gateway-Authorization: 484b1610-0911-4121-bac1-a9e42600fde3
+			// > Remote-User: gdelmont
+			// > X-Forwarded-For: dummy
+			// > Content-Length: 5242880
+			// > Expect: 100-continue
+			req.Header.Set("x-gateway-authorization", c.authKey)
+			req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
+			req.Header.Set("remote-user", auth.Username())
+
+			req.Header.Set("Accept", "*/*")
+			req.Header["x-upload-totalsize"] = []string{strconv.FormatUint(total, 10)}
+			req.Header["x-upload-range"] = []string{fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)}
+			req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
+			req.Header["content-length"] = []string{strconv.FormatUint(length, 10)}
+			req.Header.Set("Expect", "100-continue")
+			// req.Header["content-length"] = []string{strconv.FormatUint(length, 10)}
+			// req.Header.Set("x-upload-range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+			// req.Header.Set("x-upload-totalsize", strconv.FormatUint(total, 10))
+			// req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
+			// req.Header["content-length"] = []string{strconv.FormatUint(length, 10)}
+			// req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
+
+			continue
+		}
+
+		if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
+			return fmt.Errorf("got non OK status code from %s: %d", req.URL.String(), res.StatusCode)
+		}
+
+		return nil
+	}
+}
+
+func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Reader, length uint64) error {
 	url := c.buildFullHttpUrl(auth, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
@@ -365,10 +443,6 @@ func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Rea
 		req.Header.Set("x-gateway-authorization", c.authKey)
 		req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
 		req.Header.Set("remote-user", auth.Username())
-		if offset != nil {
-			lastByte := *offset + length
-			req.Header.Set("x-upload-range", fmt.Sprintf("bytes=%d-%d", *offset, lastByte))
-		}
 
 		fmt.Println("doing request to", req.URL.String())
 

@@ -352,7 +352,7 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 		}
 	}
 
-	if err := b.eos.Upload(ctx, auth, path, stream, uint64(length), nil); err != nil {
+	if err := b.eos.Upload(ctx, auth, path, stream, uint64(length)); err != nil {
 		return s3response.PutObjectOutput{}, err
 	}
 
