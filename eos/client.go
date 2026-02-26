@@ -146,7 +146,7 @@ func (c *Client) Stat(ctx context.Context, auth Auth, path string) (*erpc.MDResp
 	r, err := res.Recv()
 	if err != nil {
 		fmt.Println(err)
-		return nil, ErrNoSuchResource{Path: path}
+		return nil, &ErrNoSuchResource{Path: path}
 	}
 	return r, nil
 }
@@ -188,7 +188,7 @@ func (c *Client) ListDir(ctx context.Context, auth Auth, dir string, f func(*erp
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			return &ErrNoSuchResource{Path: dir}
 		}
 		i++
 		if i == 1 {
