@@ -364,6 +364,20 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 	return out, nil
 }
 
+func (b *EosBackend) HeadBucket(ctx context.Context, req *s3.HeadBucketInput) (*s3.HeadBucketOutput, error) {
+	fmt.Println("HeadBucket")
+
+	name := *req.Bucket
+	_, err := b.meta.GetBucket(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &s3.HeadBucketOutput{
+		BucketArn: req.Bucket,
+	}, nil
+}
+
 func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	fmt.Println("HeadObject")
 
@@ -388,6 +402,10 @@ func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*
 	objpath := filepath.Join(bucket.Path, key)
 	info, err := b.eos.Stat(ctx, auth, objpath)
 	if err != nil {
+		e := &eos.ErrNoSuchResource{}
+		if errors.As(err, &e) {
+			return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+		}
 		return nil, err
 	}
 
@@ -397,7 +415,7 @@ func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*
 
 	return &s3.HeadObjectOutput{
 		ContentLength: Ptr(int64(info.Fmd.Size)),
-		ETag:          &info.Fmd.Etag, // TODO: this is actually the MD5 of the file
+		ETag:          getMD5(info), // TODO: this is actually the MD5 of the file
 		LastModified:  Ptr(time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))),
 	}, nil
 }
@@ -424,28 +442,29 @@ func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3
 	}
 	path := filepath.Join(bucket.Path, key)
 
-	file, size, err := b.eos.Download(ctx, auth, path)
+	file, _, err := b.eos.Download(ctx, auth, path)
 	if err != nil {
 		return nil, err
 	}
 
-	if size < 0 {
-		// The size is not available
-		// A stat is requested to know the size of the file
-		info, err := b.eos.Stat(ctx, auth, path)
-		if err != nil {
-			return nil, err
-		}
-		if info.Type != erpc.TYPE_FILE {
-			return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
-		}
-
-		size = int64(info.Fmd.Size)
+	// The size is not available
+	// A stat is requested to know the size of the file
+	info, err := b.eos.Stat(ctx, auth, path)
+	if err != nil {
+		return nil, err
 	}
+	if info.Type != erpc.TYPE_FILE {
+		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
+	}
+
+	size := int64(info.Fmd.Size)
+	mtime := time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))
 
 	return &s3.GetObjectOutput{
 		Body:          file,
 		ContentLength: &size,
+		LastModified:  &mtime,
+		ETag:          getMD5(info),
 	}, nil
 }
 
@@ -483,7 +502,7 @@ func (b *EosBackend) mdResponseToS3Object(bucketDir string, md *erpc.MDResponse)
 		obj.StorageClass = types.ObjectStorageClassStandard
 	} else {
 		// TODO: the etag for s3 is the md5 of the resource
-		obj.ETag = &md.Fmd.Etag
+		obj.ETag = getMD5(md)
 		obj.StorageClass = types.ObjectStorageClassStandard
 		obj.LastModified = Ptr(time.Unix(int64(md.Fmd.Mtime.Sec), int64(md.Fmd.Mtime.NSec)))
 		obj.Key = &key
@@ -616,8 +635,13 @@ func (b *EosBackend) ListObjectsV2(ctx context.Context, req *s3.ListObjectsV2Inp
 	}
 
 	if err := b.eos.ListDir(ctx, eosAuthFromLoggedUser(ctx), folder, appendObjects, filters); err != nil {
-		// TODO: improve this error
-		return s3response.ListObjectsV2Result{}, err
+		e := &eos.ErrNoSuchResource{}
+		if errors.As(err, &e) {
+			objects = []s3response.Object{}
+		} else {
+			// TODO: improve this error
+			return s3response.ListObjectsV2Result{}, err
+		}
 	}
 
 	return s3response.ListObjectsV2Result{
