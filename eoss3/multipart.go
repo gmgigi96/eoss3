@@ -1,6 +1,7 @@
 package eoss3
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -91,7 +92,7 @@ func (b *EosBackend) CompleteMultipartUpload(ctx context.Context, req *s3.Comple
 	var total uint64
 	var count int
 	if err := b.eos.ListDir(ctx, auth, folder, func(m *go_eosgrpc.MDResponse) {
-		if m.Type != go_eosgrpc.TYPE_FILE || isHiddenResource(string(m.Fmd.Path)) {
+		if m.Type != go_eosgrpc.TYPE_FILE || !bytes.HasPrefix(m.Fmd.Name, []byte(".part.")) {
 			return
 		}
 		total += m.Fmd.Size
@@ -103,8 +104,7 @@ func (b *EosBackend) CompleteMultipartUpload(ctx context.Context, req *s3.Comple
 	// We assume that all the parts have been provided
 	var offset uint64
 	for p := range count {
-		part := filepath.Join(folder, fmt.Sprintf("%05d", p+1))
-		fmt.Printf("Considering part %s\n", part)
+		part := filepath.Join(folder, fmt.Sprintf(".part.%05d", p+1))
 
 		data, length, err := b.eos.Download(ctx, auth, part)
 		if err != nil {
@@ -116,9 +116,14 @@ func (b *EosBackend) CompleteMultipartUpload(ctx context.Context, req *s3.Comple
 		}
 		offset += uint64(length)
 	}
+
 	dst := filepath.Join(bucket.Path, *req.Key)
+	dir := filepath.Dir(dst)
+	if err := b.eos.Mkdir(ctx, auth, dir, 0755); err != nil {
+		return s3response.CompleteMultipartUploadResult{}, "", fmt.Errorf("error creating dir %s: %w", dir, err)
+	}
 	if err := b.eos.Rename(ctx, auth, tmpFile, dst); err != nil {
-		return s3response.CompleteMultipartUploadResult{}, "", err
+		return s3response.CompleteMultipartUploadResult{}, "", fmt.Errorf("error renaming %s to %s: %w", tmpFile, dst, err)
 	}
 
 	if err := b.eos.Remove(ctx, auth, folder, true); err != nil {
@@ -161,12 +166,8 @@ func (b *EosBackend) AbortMultipartUpload(ctx context.Context, req *s3.AbortMult
 	}
 
 	folder := multipartFolder(&bucket, *req.UploadId)
-	if err := b.eos.Remove(ctx, auth, folder, true); err != nil {
-		return err
-	}
-	if err := b.meta.DeleteMultipartUpload(bucket.Name, *req.UploadId); err != nil {
-		return err
-	}
+	b.eos.Remove(ctx, auth, folder, true)
+	b.meta.DeleteMultipartUpload(bucket.Name, *req.UploadId)
 	return nil
 }
 
@@ -192,20 +193,21 @@ func (b *EosBackend) ListParts(ctx context.Context, req *s3.ListPartsInput) (s3r
 	folder := multipartFolder(&bucket, *req.UploadId)
 	var parts []s3response.Part
 	if err := b.eos.ListDir(ctx, auth, folder, func(m *go_eosgrpc.MDResponse) {
-		if m.Type != go_eosgrpc.TYPE_FILE {
+		if m.Type != go_eosgrpc.TYPE_FILE || !bytes.HasPrefix(m.Fmd.Name, []byte(".part.")) {
 			return
 		}
 
-		// TODO: we don't have the etag yet
-		partNumber, err := strconv.ParseInt(string(m.Fmd.Name), 10, 64)
+		numStr := string(bytes.TrimPrefix(m.Fmd.Name, []byte(".part.")))
+
+		partNumber, err := strconv.ParseInt(numStr, 10, 64)
 		if err != nil {
-			fmt.Println(err)
 			return
 		}
 		parts = append(parts, s3response.Part{
 			PartNumber:   int(partNumber),
 			LastModified: time.Unix(int64(m.Fmd.Mtime.Sec), int64(m.Fmd.Mtime.NSec)),
 			Size:         int64(m.Fmd.Size),
+			ETag:         *getMD5(m),
 		})
 	}, nil); err != nil {
 		return s3response.ListPartsResult{}, err
@@ -250,7 +252,7 @@ func (b *EosBackend) UploadPart(ctx context.Context, req *s3.UploadPartInput) (*
 	}
 
 	// TODO: we should check if the upload id is correct
-	partFile := filepath.Join(multipartFolder(&bucket, *req.UploadId), fmt.Sprintf("%05d", *req.PartNumber))
+	partFile := filepath.Join(multipartFolder(&bucket, *req.UploadId), fmt.Sprintf(".part.%05d", *req.PartNumber))
 
 	if err := b.eos.Upload(ctx, auth, partFile, req.Body, uint64(*req.ContentLength)); err != nil {
 		return nil, err
