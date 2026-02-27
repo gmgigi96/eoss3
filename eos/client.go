@@ -145,7 +145,6 @@ func (c *Client) Stat(ctx context.Context, auth Auth, path string) (*erpc.MDResp
 
 	r, err := res.Recv()
 	if err != nil {
-		fmt.Println(err)
 		return nil, &ErrNoSuchResource{Path: path}
 	}
 	return r, nil
@@ -356,32 +355,23 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 func (c *Client) UploadChunk(ctx context.Context, auth Auth, path string, chunk io.Reader, length, offset, total uint64) error {
 	url := c.buildFullHttpUrl(auth, path)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
+	req, err := http.NewRequestWithContext(context.TODO(), http.MethodPut, url, nil)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("x-gateway-authorization", c.authKey)
-	req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
-	req.Header.Set("remote-user", auth.Username())
-
 	for {
+		req.Header["x-gateway-authorization"] = []string{c.authKey}
+		req.Header["x-forwarded-for"] = []string{"dummy"} // TODO: is this really neaded??
+		req.Header["remote-user"] = []string{auth.Username()}
 
-		// req.Header.Set("content-length", strconv.FormatUint(length, 10))
-		// req.Header["x-upload-range"] = []string{}
-		// req.Header["x-upload-totalsize"] = []string{strconv.FormatUint(total, 10)}
-
-		fmt.Println("doing request to", req.URL.String(), req.Header)
+		req.Header["x-upload-totalsize"] = []string{strconv.FormatUint(total, 10)}
+		req.Header["x-upload-range"] = []string{fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)}
 
 		res, err := c.httpClient.Do(req)
 		if err != nil {
 			return err
 		}
-
-		fmt.Println("**************************************** got response with status code", res.StatusCode)
-
-		// io.Copy(io.Discard, req.Body)
-		// req.Body.Close()
 
 		if res.StatusCode == http.StatusTemporaryRedirect {
 			// we got redirected to an FST
@@ -391,35 +381,14 @@ func (c *Client) UploadChunk(ctx context.Context, auth Auth, path string, chunk 
 				return err
 			}
 
-			req, err = http.NewRequestWithContext(ctx, http.MethodPut, loc.String(), chunk)
+			req, err = http.NewRequestWithContext(context.TODO(), http.MethodPut, loc.String(), chunk)
 			if err != nil {
 				return err
 			}
-			// > Accept: */*
-			// > x-upload-totalsize: 524288000
-			// > x-upload-range: bytes=0-5242879
-			// > X-Gateway-Authorization: 484b1610-0911-4121-bac1-a9e42600fde3
-			// > Remote-User: gdelmont
-			// > X-Forwarded-For: dummy
-			// > Content-Length: 5242880
-			// > Expect: 100-continue
-			req.Header.Set("x-gateway-authorization", c.authKey)
-			req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
-			req.Header.Set("remote-user", auth.Username())
-
-			req.Header.Set("Accept", "*/*")
-			req.Header["x-upload-totalsize"] = []string{strconv.FormatUint(total, 10)}
-			req.Header["x-upload-range"] = []string{fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)}
-			req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
-			req.Header["content-length"] = []string{strconv.FormatUint(length, 10)}
-			req.Header.Set("Expect", "100-continue")
-			// req.Header["content-length"] = []string{strconv.FormatUint(length, 10)}
-			// req.Header.Set("x-upload-range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
-			// req.Header.Set("x-upload-totalsize", strconv.FormatUint(total, 10))
-			// req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
-			// req.Header["content-length"] = []string{strconv.FormatUint(length, 10)}
-			// req.Header.Set("Content-Length", strconv.FormatUint(length, 10))
-
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", length))
+			// This is a workaround because apparently the FST is case sensitive
+			// otherwise it will crash
+			req.Header["content-length"] = []string{fmt.Sprintf("%d", length)}
 			continue
 		}
 
@@ -443,8 +412,6 @@ func (c *Client) Upload(ctx context.Context, auth Auth, path string, data io.Rea
 		req.Header.Set("x-gateway-authorization", c.authKey)
 		req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
 		req.Header.Set("remote-user", auth.Username())
-
-		fmt.Println("doing request to", req.URL.String())
 
 		res, err := c.httpClient.Do(req)
 		if err != nil {
