@@ -106,7 +106,7 @@ func (b *EosBackend) CompleteMultipartUpload(ctx context.Context, req *s3.Comple
 	for p := range count {
 		part := filepath.Join(folder, fmt.Sprintf(".part.%05d", p+1))
 
-		data, length, err := b.eos.Download(ctx, auth, part)
+		data, length, err := b.eos.Download(ctx, auth, part, nil)
 		if err != nil {
 			panic(err)
 		}

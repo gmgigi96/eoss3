@@ -311,7 +311,7 @@ func (c *Client) buildFullHttpUrl(auth Auth, path string) string {
 	return final
 }
 
-func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadCloser, int64, error) {
+func (c *Client) Download(ctx context.Context, auth Auth, path string, rangeHeader *string) (io.ReadCloser, int64, error) {
 	url := c.buildFullHttpUrl(auth, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -323,6 +323,10 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 		req.Header.Set("x-gateway-authorization", c.authKey)
 		req.Header.Set("x-forwarded-for", "dummy") // TODO: is this really neaded??
 		req.Header.Set("remote-user", auth.Username())
+
+		if rangeHeader != nil && *rangeHeader != "" {
+			req.Header.Set("Range", *rangeHeader)
+		}
 
 		res, err := c.httpClient.Do(req)
 		if err != nil {
@@ -344,7 +348,7 @@ func (c *Client) Download(ctx context.Context, auth Auth, path string) (io.ReadC
 			continue
 		}
 
-		if res.StatusCode != http.StatusOK {
+		if res.StatusCode >= 300 {
 			return nil, 0, fmt.Errorf("got non OK status code from %s: %d", req.URL.String(), res.StatusCode)
 		}
 

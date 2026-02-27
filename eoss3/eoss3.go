@@ -442,13 +442,11 @@ func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3
 	}
 	path := filepath.Join(bucket.Path, key)
 
-	file, _, err := b.eos.Download(ctx, auth, path)
+	file, size, err := b.eos.Download(ctx, auth, path, req.Range)
 	if err != nil {
 		return nil, err
 	}
 
-	// The size is not available
-	// A stat is requested to know the size of the file
 	info, err := b.eos.Stat(ctx, auth, path)
 	if err != nil {
 		return nil, err
@@ -457,13 +455,10 @@ func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3
 		return nil, s3err.GetAPIError(s3err.ErrNoSuchKey)
 	}
 
-	size := int64(info.Fmd.Size)
-	mtime := time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))
-
 	return &s3.GetObjectOutput{
 		Body:          file,
 		ContentLength: &size,
-		LastModified:  &mtime,
+		LastModified:  Ptr(time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))),
 		ETag:          getMD5(info),
 	}, nil
 }
