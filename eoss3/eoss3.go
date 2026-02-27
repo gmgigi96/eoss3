@@ -3,12 +3,8 @@ package eoss3
 import (
 	"bufio"
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
-	"io"
 	"path"
 	"path/filepath"
 	"slices"
@@ -37,11 +33,6 @@ type Config struct {
 	Authkey string `mapstructure:"authkey"`
 	// Insecure is set to true if the client does not want to use TLS.
 	Insecure bool `mapstructure:"insecure"`
-
-	// ComputeMD5 on put so the client will be happy
-	// Once EOS will support storing the MD5, this can be retrieved
-	// directly from it.
-	ComputeMD5 bool `mapstructure:"compute_md5"`
 }
 
 func (c *Config) Validate() error {
@@ -327,16 +318,6 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 		return s3response.PutObjectOutput{}, s3err.GetAPIError(s3err.ErrAccessDenied)
 	}
 
-	// Compute temporarily the chechsum on the gateway side
-	// to make the client happy for now. Once EOS has
-	// this feature available, this one will be removed from here.
-	var hasher hash.Hash
-	stream := po.Body
-	if b.cfg.ComputeMD5 {
-		hasher = md5.New()
-		stream = io.TeeReader(po.Body, hasher)
-	}
-
 	auth := eos.Auth{
 		Uid: uint64(acct.UserID),
 		Gid: uint64(acct.GroupID),
@@ -352,16 +333,19 @@ func (b *EosBackend) PutObject(ctx context.Context, po s3response.PutObjectInput
 		}
 	}
 
-	if err := b.eos.Upload(ctx, auth, path, stream, uint64(length)); err != nil {
+	if err := b.eos.Upload(ctx, auth, path, po.Body, uint64(length)); err != nil {
 		return s3response.PutObjectOutput{}, err
 	}
 
-	out := s3response.PutObjectOutput{}
-	if b.cfg.ComputeMD5 {
-		out.ETag = hex.EncodeToString(hasher.Sum(nil))
+	md, err := b.eos.Stat(ctx, auth, path)
+	if err != nil {
+		return s3response.PutObjectOutput{}, err
 	}
 
-	return out, nil
+	return s3response.PutObjectOutput{
+		Size: Ptr(int64(md.Fmd.Size)),
+		ETag: getMD5(md),
+	}, nil
 }
 
 func (b *EosBackend) HeadBucket(ctx context.Context, req *s3.HeadBucketInput) (*s3.HeadBucketOutput, error) {
@@ -415,7 +399,7 @@ func (b *EosBackend) HeadObject(ctx context.Context, req *s3.HeadObjectInput) (*
 
 	return &s3.HeadObjectOutput{
 		ContentLength: Ptr(int64(info.Fmd.Size)),
-		ETag:          getMD5(info), // TODO: this is actually the MD5 of the file
+		ETag:          Ptr(getMD5(info)),
 		LastModified:  Ptr(time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))),
 	}, nil
 }
@@ -459,7 +443,7 @@ func (b *EosBackend) GetObject(ctx context.Context, req *s3.GetObjectInput) (*s3
 		Body:          file,
 		ContentLength: &size,
 		LastModified:  Ptr(time.Unix(int64(info.Fmd.Mtime.Sec), int64(info.Fmd.Mtime.NSec))),
-		ETag:          getMD5(info),
+		ETag:          Ptr(getMD5(info)),
 	}, nil
 }
 
@@ -496,8 +480,7 @@ func (b *EosBackend) mdResponseToS3Object(bucketDir string, md *erpc.MDResponse)
 		obj.Size = Ptr(int64(0))
 		obj.StorageClass = types.ObjectStorageClassStandard
 	} else {
-		// TODO: the etag for s3 is the md5 of the resource
-		obj.ETag = getMD5(md)
+		obj.ETag = Ptr(getMD5(md))
 		obj.StorageClass = types.ObjectStorageClassStandard
 		obj.LastModified = Ptr(time.Unix(int64(md.Fmd.Mtime.Sec), int64(md.Fmd.Mtime.NSec)))
 		obj.Key = &key

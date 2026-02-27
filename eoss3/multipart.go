@@ -142,7 +142,7 @@ func (b *EosBackend) CompleteMultipartUpload(ctx context.Context, req *s3.Comple
 	return s3response.CompleteMultipartUploadResult{
 		Bucket: req.Bucket,
 		Key:    req.Key,
-		ETag:   getMD5(res),
+		ETag:   Ptr(getMD5(res)),
 	}, "", nil
 }
 
@@ -207,7 +207,7 @@ func (b *EosBackend) ListParts(ctx context.Context, req *s3.ListPartsInput) (s3r
 			PartNumber:   int(partNumber),
 			LastModified: time.Unix(int64(m.Fmd.Mtime.Sec), int64(m.Fmd.Mtime.NSec)),
 			Size:         int64(m.Fmd.Size),
-			ETag:         *getMD5(m),
+			ETag:         getMD5(m),
 		})
 	}, nil); err != nil {
 		return s3response.ListPartsResult{}, err
@@ -222,14 +222,13 @@ func (b *EosBackend) ListParts(ctx context.Context, req *s3.ListPartsInput) (s3r
 	}, nil
 }
 
-func getMD5(r *go_eosgrpc.MDResponse) *string {
+func getMD5(r *go_eosgrpc.MDResponse) string {
 	for _, xs := range r.Fmd.Checksums {
 		if xs.Type == "md5" {
-			val := string(xs.Value)
-			return &val
+			return string(xs.Value)
 		}
 	}
-	return nil
+	return "<unknown>"
 }
 
 func (b *EosBackend) UploadPart(ctx context.Context, req *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
@@ -265,7 +264,7 @@ func (b *EosBackend) UploadPart(ctx context.Context, req *s3.UploadPartInput) (*
 	}
 
 	return &s3.UploadPartOutput{
-		ETag: getMD5(res),
+		ETag: Ptr(getMD5(res)),
 	}, err
 }
 
