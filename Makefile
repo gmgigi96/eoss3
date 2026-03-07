@@ -6,9 +6,12 @@ CLI=eoss3-cli
 MODULE = github.com/versity/versitygw
 BINARY_NAME = versitygw
 TARGET_BIN = /usr/local/bin/$(BINARY_NAME) 
+
+.PHONY: all
 all: build
 
-build: $(PLUGIN)
+.PHONY: build
+build: deps $(PLUGIN)
 
 .PHONY: $(PLUGIN)
 $(PLUGIN):
@@ -25,10 +28,6 @@ $(PLUGIN):
 	@mv go.mod.bak go.mod
 	@mv go.sum.bak go.sum
 
-.PHONY: $(CLI)
-$(CLI):
-	$(GOBUILD) -o $(CLI) cli/main.go
-
 .PHONY: deps
 deps:
 	$(eval DESIRED_VER=$(shell go list -f '{{.Version}}' -m $(MODULE)))
@@ -41,7 +40,12 @@ deps:
 		restorecon $(TARGET_BIN); \
 	fi
 
-install: deps $(PLUGIN) $(CLI)
+.PHONY: cli
+cli:
+	$(GOBUILD) -o $(CLI) cli/main.go
+
+.PHONY: install
+install: $(PLUGIN) cli
 	@cp $(PLUGIN) /usr/local/lib/eoss3.so
 	@cp $(CLI) /usr/local/bin/eoss3-cli
 
