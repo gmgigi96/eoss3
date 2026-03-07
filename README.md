@@ -55,8 +55,7 @@ Here is an example configuration file
 grpc_url: "eospilot.cern.ch:50051"
 http_url: "https://eospilot.cern.ch:8444"
 authkey: "secret"
-
-compute_md5: true
+insecure: false
 
 buckets:
   driver: "local"
@@ -70,7 +69,7 @@ buckets:
 | **`grpc_url`** | The address and port for the EOS gRPC service.|
 | **`http_url`** | The full URL for the EOS HTTPS service. |
 | **`authkey`** | The authentication key (token) used to authorize requests to both the gRPC and HTTP endpoints. |
-| **`compute_md5`** | A boolean (`true` or `false`). If set to `true`, the gateway will compute the MD5 checksum for uploaded objects. |
+| **`insecure`** | If true disables transport security when connecting to EOS. |
 | **`buckets.driver`** | Specifies how bucket metadata should be stored. `local` uses the local filesystem. |
 | **`buckets.folder`** | If `driver` is `local`, this is the absolute path to the directory where bucket configuration files will be stored. |
 
